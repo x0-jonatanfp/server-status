@@ -9,6 +9,9 @@ dist/
 .env.*
 !.env.example
 
+# Inventario real de la maquina (lo que se publica es inventory.yaml.example)
+inventory.yaml
+
 # Runtime
 logs/
 data/

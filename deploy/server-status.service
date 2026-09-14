@@ -1,0 +1,36 @@
+[Unit]
+Description=Server Status — estado del servidor en Discord
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=180
+StartLimitBurst=15
+
+[Service]
+Type=simple
+User=cultofskaro
+Group=cultofskaro
+WorkingDirectory=/srv/services/server-status
+Environment=HOME=/home/cultofskaro
+Environment=LOG_FILE=/var/log/server-status.log
+# El lanzador carga /srv/services/server-status/.env (token y canales).
+ExecStart=/home/cultofskaro/.secrets/bin/run srv:server-status -- /usr/bin/node dist/index.js
+Restart=always
+RestartSec=15
+UMask=0077
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=server-status
+
+# Limites de recursos
+LimitNOFILE=65536
+MemoryMax=512M
+
+# El bot invoca `sudo -n fail2ban-client`: NoNewPrivileges lo romperia.
+# ProtectSystem=full deja /usr, /boot y /etc en solo lectura; /var y ~ siguen
+# escribibles.
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
