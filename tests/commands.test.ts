@@ -105,7 +105,7 @@ function harness(overrides: { requiredRoles?: string[] } = {}): Harness {
   const config = parseAppConfig({
     DISCORD_TOKEN: "token",
     STATUS_CHANNEL_ID: CHANNEL,
-    REQUIRED_ROLES: overrides.requiredRoles ? `[${overrides.requiredRoles.join("],[")}]` : undefined,
+    REQUIRED_ROLES: overrides.requiredRoles ? overrides.requiredRoles.join(",") : undefined,
   });
   const inventory = parseInventory({ services: [{ group: "Infra", units: ["nginx"] }] });
   const publisher = new FakePublisher();

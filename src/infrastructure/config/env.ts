@@ -164,14 +164,18 @@ function snowflakeListEnv(
 }
 
 /**
- * Acepta `[Rol A],[Rol B]` (formato del bot antiguo) o `Rol A, Rol B`.
- * Devuelve la lista sin corchetes ni espacios sobrantes.
+ * Lista de nombres de rol separados por comas. Los corchetes son parte del
+ * nombre en este servidor (`[ServerManager]`), asi que NO se quitan: quitarlos
+ * hacia que la comprobacion de permisos no coincidiese con ningun rol real. Se
+ * admite el prefijo `@` de Discord por comodidad al copiar.
  */
 export function parseRequiredRoles(raw: string | undefined): string[] {
   if (!raw || raw.trim() === "") return [];
-  const bracketed = raw.match(/\[([^\]]*)\]/g);
-  const parts = bracketed ? bracketed.map((chunk) => chunk.slice(1, -1)) : raw.split(",");
-  return parts.map((part) => part.trim()).filter((part) => part !== "");
+  const roles = raw
+    .split(",")
+    .map((part) => part.trim().replace(/^@/, ""))
+    .filter((part) => part !== "");
+  return [...new Set(roles)];
 }
 
 function parseActivityType(raw: string | undefined): ActivityTypeName {

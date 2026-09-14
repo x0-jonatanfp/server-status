@@ -257,12 +257,24 @@ describe("plantillas versionadas", () => {
 });
 
 describe("parseRequiredRoles", () => {
-  it("acepta el formato con corchetes del bot antiguo", () => {
-    expect(parseRequiredRoles("[ServerManager],[LoCo+]")).toEqual(["ServerManager", "LoCo+"]);
+  it("respeta los corchetes, que forman parte del nombre del rol", () => {
+    expect(parseRequiredRoles("[ServerManager],[LoCo+]")).toEqual(["[ServerManager]", "[LoCo+]"]);
   });
 
-  it("acepta una lista separada por comas", () => {
-    expect(parseRequiredRoles("ServerManager, LoCo+")).toEqual(["ServerManager", "LoCo+"]);
+  it("acepta una lista mixta separada por comas", () => {
+    expect(parseRequiredRoles("Administrador, Moderador,[ServerManager], [LoCo+]")).toEqual([
+      "Administrador",
+      "Moderador",
+      "[ServerManager]",
+      "[LoCo+]",
+    ]);
+  });
+
+  it("admite el prefijo @ y quita repetidos", () => {
+    expect(parseRequiredRoles("@Administrador,Administrador, @Moderador")).toEqual([
+      "Administrador",
+      "Moderador",
+    ]);
   });
 
   it("devuelve una lista vacia si no hay roles", () => {
