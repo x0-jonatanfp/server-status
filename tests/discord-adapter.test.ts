@@ -279,16 +279,27 @@ describe("formatAlerts y su notificador", () => {
     expect(sent[0]).toContain("GPU caliente");
   });
 
-  it("avisa por el log y no falla si no hay canal de alertas", async () => {
+  it("deja las alertas en el log si no hay canal, sin escribir en Discord", async () => {
     const log = logger();
+    const sent = vi.fn(async () => ({ id: "1" }));
     const notifier = createDiscordAlertNotifier({
-      resolver: { resolve: async () => null },
+      resolver: {
+        resolve: async () => ({
+          send: sent,
+          messages: { fetch: async () => ({ edit: async () => undefined }) },
+        }),
+      },
       alertChannelId: null,
       logger: log,
     });
 
     await expect(notifier.notify(alerts)).resolves.toBeUndefined();
-    expect(log.warn).toHaveBeenCalledOnce();
+
+    // Critica como error y aviso como warn, con el detalle del umbral.
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining("GPU caliente"));
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining("95.0 °C"));
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("CPU fuera de rango"));
+    expect(sent).not.toHaveBeenCalled();
   });
 });
 

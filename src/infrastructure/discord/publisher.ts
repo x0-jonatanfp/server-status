@@ -132,10 +132,15 @@ export function createDiscordAlertNotifier(options: {
 }): AlertNotifierPort {
   return {
     async notify(alerts: Alert[]): Promise<void> {
+      // Sin ALERT_CHANNEL_ID las alertas se quedan en el log del servicio, que
+      // es el modo elegido para no ensuciar Discord. Se registran con su
+      // severidad para poder filtrarlas.
       if (options.alertChannelId === null) {
-        options.logger.warn(
-          `hay ${alerts.length} alerta(s) pero no hay ALERT_CHANNEL_ID configurado`,
-        );
+        for (const alert of alerts) {
+          const line = `${alert.title} — ${alert.detail}`;
+          if (alert.severity === "critical") options.logger.error(line);
+          else options.logger.warn(line);
+        }
         return;
       }
       const channel = await options.resolver.resolve(options.alertChannelId);
