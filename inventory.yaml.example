@@ -1,0 +1,71 @@
+# Inventario de lo que se monitoriza. Copia este fichero a inventory.yaml y
+# ajustalo a tu maquina:
+#
+#   cp inventory.yaml.example inventory.yaml
+#
+# El repo no incluye canales, hosts ni sensores reales: todo sale de aqui y del
+# .env. Cualquier clave desconocida o mal puesta aborta el arranque diciendo
+# cual es.
+
+# Webs publicas que se comprueban por HTTP.
+websites:
+  - url: https://example.com
+    label: example
+
+# Unidades systemd, agrupadas para que el mensaje no sea una lista plana.
+services:
+  - group: Infra
+    units: [nginx, fail2ban, postgresql@16-main, redis-server]
+  - group: Apps
+    units: [my-app]
+  - group: Bots
+    units: [server-status]
+
+# Sensores de temperatura. `source: hwmon` lee /sys/class/hwmon y no necesita
+# privilegios; `source: smartctl` consulta un disco SATA y puede requerir una
+# regla NOPASSWD para /usr/sbin/smartctl.
+# Las lecturas fuera del rango 1-120 C se descartan y el sensor sale N/A.
+temperatures:
+  - source: hwmon
+    chip: k10temp
+    label: Tctl
+    name: CPU
+    warn: 75
+    crit: 90
+  - source: hwmon
+    chip: amdgpu
+    label: edge
+    name: GPU
+    warn: 80
+    crit: 91
+  - source: hwmon
+    chip: nvme
+    label: Composite
+    name: NVMe
+    warn: 70
+    crit: 79
+  - source: smartctl
+    device: /dev/sda
+    name: SSD
+    warn: 60
+    crit: 70
+
+# Que se muestra en el mensaje y con que colores.
+display:
+  show_groups: true
+  show_fail2ban_breakdown: true
+  show_ping: true
+  progress_bar_blocks: 5
+  colors:
+    ok: "#00FF41"
+    warning: "#FFAA00"
+    critical: "#FF0040"
+
+# Umbrales de alerta. El cooldown evita repetir la misma alerta en cada ciclo.
+alerts:
+  cooldown_minutes: 30
+  thresholds:
+    cpu_percent: { warn: 70, crit: 90 }
+    memory_percent: { warn: 70, crit: 90 }
+    disk_percent: { warn: 80, crit: 95 }
+    ping_ms: { warn: 100, crit: 500 }
