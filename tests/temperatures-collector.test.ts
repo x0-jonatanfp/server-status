@@ -5,11 +5,8 @@ import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 import type { TemperatureConfig } from "../src/config.ts";
-import {
-  collectTemperatures,
-  normalizeReading,
-  type ExecFileFn,
-} from "../src/collectors/temperatures.ts";
+import type { ExecFileFn } from "../src/collectors/exec.ts";
+import { collectTemperatures, normalizeReading } from "../src/collectors/temperatures.ts";
 
 const tmpDirs: string[] = [];
 

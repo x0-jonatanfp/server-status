@@ -15,11 +15,11 @@
  * placa expone un termistor desconectado que reporta -55 C y el NVMe declara
  * maximos de 65261 C. Sin ese filtro el mensaje mostraria basura.
  */
-import { execFile } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { TemperatureConfig, TemperatureSource } from "../config.ts";
+import { defaultExec, stdoutOf, type ExecFileFn } from "./exec.ts";
 
 /** Rango valido de una lectura de temperatura, en grados centigrados. */
 export const MIN_VALID_CELSIUS = 1;
@@ -41,12 +41,6 @@ export interface TemperatureReading {
   /** Origen concreto, para el log: `k10temp Tctl` o `/dev/sda`. */
   detail: string;
 }
-
-export type ExecFileFn = (
-  file: string,
-  args: string[],
-  options: { timeout: number },
-) => Promise<{ stdout: string }>;
 
 export interface CollectTemperaturesOptions {
   sensors: TemperatureConfig[];
@@ -217,7 +211,7 @@ async function tryExec(
   try {
     ({ stdout } = await exec(file, args, { timeout }));
   } catch (error) {
-    stdout = (error as { stdout?: string }).stdout ?? "";
+    stdout = stdoutOf(error);
   }
 
   if (stdout.trim() === "") return { temperature: null };
@@ -231,14 +225,3 @@ async function tryExec(
     return { temperature: null };
   }
 }
-
-const defaultExec: ExecFileFn = (file, args, options) =>
-  new Promise((resolve, reject) => {
-    execFile(file, args, { timeout: options.timeout, maxBuffer: 1024 * 1024, encoding: "utf8" }, (error, stdout) => {
-      if (error) {
-        reject(Object.assign(error, { stdout }));
-        return;
-      }
-      resolve({ stdout });
-    });
-  });
