@@ -23,9 +23,10 @@ afterAll(() => {
   for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-const MINIMAL_ENV = ["DISCORD_TOKEN=token-de-prueba", "STATUS_CHANNEL_ID=111111111111111111"].join(
-  "\n",
-);
+const MINIMAL_ENV = [
+  "DISCORD_TOKEN=token-de-prueba",
+  "STATUS_CHANNEL_IDS=111111111111111111",
+].join("\n");
 
 const MINIMAL_INVENTORY = [
   "websites:",
@@ -50,7 +51,7 @@ describe("loadAppConfig + loadInventory", () => {
     const { app, inventory } = load({ env: MINIMAL_ENV, inventory: MINIMAL_INVENTORY }, {});
 
     expect(app.discordToken).toBe("token-de-prueba");
-    expect(app.statusChannelId).toBe("111111111111111111");
+    expect(app.statusChannelIds).toEqual(["111111111111111111"]);
     expect(app.botDisplayName).toBe("server-status");
     expect(app.updateIntervalSeconds).toBe(300);
     expect(app.httpTimeoutMs).toBe(8000);
@@ -62,20 +63,41 @@ describe("loadAppConfig + loadInventory", () => {
 
   it("aborta si falta DISCORD_TOKEN", () => {
     expect(() =>
-      load({ env: "STATUS_CHANNEL_ID=111111111111111111", inventory: MINIMAL_INVENTORY }),
+      load({ env: "STATUS_CHANNEL_IDS=111111111111111111", inventory: MINIMAL_INVENTORY }),
     ).toThrowError(/DISCORD_TOKEN/);
   });
 
-  it("aborta si falta STATUS_CHANNEL_ID o no es un id", () => {
+  it("aborta si falta STATUS_CHANNEL_IDS o no es un id", () => {
     expect(() => load({ env: "DISCORD_TOKEN=x", inventory: MINIMAL_INVENTORY })).toThrowError(
-      /STATUS_CHANNEL_ID/,
+      /STATUS_CHANNEL_IDS/,
     );
     expect(() =>
       load({
-        env: "DISCORD_TOKEN=token-de-prueba\nSTATUS_CHANNEL_ID=123",
+        env: "DISCORD_TOKEN=token-de-prueba\nSTATUS_CHANNEL_IDS=123",
         inventory: MINIMAL_INVENTORY,
       }),
-    ).toThrowError(/STATUS_CHANNEL_ID/);
+    ).toThrowError(/STATUS_CHANNEL_IDS/);
+  });
+
+  it("admite varios canales separados por comas, sin repetidos", () => {
+    const { app } = load({
+      env: [
+        "DISCORD_TOKEN=token-de-prueba",
+        "STATUS_CHANNEL_IDS=111111111111111111, 222222222222222222,111111111111111111",
+      ].join("\n"),
+      inventory: MINIMAL_INVENTORY,
+    });
+
+    expect(app.statusChannelIds).toEqual(["111111111111111111", "222222222222222222"]);
+  });
+
+  it("sigue aceptando la clave singular STATUS_CHANNEL_ID", () => {
+    const { app } = load({
+      env: ["DISCORD_TOKEN=token-de-prueba", "STATUS_CHANNEL_ID=111111111111111111"].join("\n"),
+      inventory: MINIMAL_INVENTORY,
+    });
+
+    expect(app.statusChannelIds).toEqual(["111111111111111111"]);
   });
 
   it("UPDATE_INTERVAL cambia de verdad el ciclo", () => {

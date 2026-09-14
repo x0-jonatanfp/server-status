@@ -51,7 +51,8 @@ export interface AppConfig {
   /** Dominio o nombre publico del host, si se quiere mostrar junto al SO. */
   hostLabel: string | null;
   activity: ActivityConfig;
-  statusChannelId: string;
+  /** Canales donde se publica el estado. Al menos uno. */
+  statusChannelIds: string[];
   alertChannelId: string | null;
   guildId: string | null;
   requiredRoles: string[];
@@ -135,6 +136,34 @@ function snowflakeEnv(
 }
 
 /**
+ * Igual que `snowflakeEnv`, pero acepta una lista separada por comas. Se admite
+ * tambien la clave singular antigua para no romper un `.env` ya escrito.
+ */
+function snowflakeListEnv(
+  env: Record<string, string | undefined>,
+  key: string,
+  fallbackKey: string | null,
+): string[] {
+  const raw = optionalEnv(env, key) ?? (fallbackKey ? optionalEnv(env, fallbackKey) : null);
+  if (raw === null || raw.trim() === "") {
+    fail(`falta la variable obligatoria ${key} en el .env`);
+  }
+  const ids = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+  if (ids.length === 0) {
+    fail(`falta la variable obligatoria ${key} en el .env`);
+  }
+  for (const id of ids) {
+    if (!/^\d{17,20}$/.test(id)) {
+      fail(`${key} debe contener ids de Discord (17-20 digitos, recibido: ${JSON.stringify(id)})`);
+    }
+  }
+  return [...new Set(ids)];
+}
+
+/**
  * Acepta `[Rol A],[Rol B]` (formato del bot antiguo) o `Rol A, Rol B`.
  * Devuelve la lista sin corchetes ni espacios sobrantes.
  */
@@ -163,7 +192,7 @@ export function parseAppConfig(env: Record<string, string | undefined>): AppConf
       state: optionalEnv(env, "BOT_ACTIVITY_STATE"),
       url: optionalEnv(env, "BOT_ACTIVITY_URL"),
     },
-    statusChannelId: snowflakeEnv(env, "STATUS_CHANNEL_ID", true),
+    statusChannelIds: snowflakeListEnv(env, "STATUS_CHANNEL_IDS", "STATUS_CHANNEL_ID"),
     alertChannelId: snowflakeEnv(env, "ALERT_CHANNEL_ID", false),
     guildId: snowflakeEnv(env, "GUILD_ID", false),
     requiredRoles: parseRequiredRoles(optionalEnv(env, "REQUIRED_ROLES") ?? undefined),

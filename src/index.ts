@@ -90,8 +90,11 @@ export async function main(): Promise<void> {
 
   // --- Casos de uso ---------------------------------------------------------
 
-  // El canal puede venir de /set_channel (persistido) o del .env.
-  const channelId = (await store.getStatusChannelId()) ?? app.statusChannelId;
+  // Los canales salen del .env; si se ha usado /set_channel, ese manda y queda
+  // como unico destino.
+  const overrideChannelId = await store.getStatusChannelId();
+  const channelIds =
+    overrideChannelId !== null ? [overrideChannelId] : app.statusChannelIds;
 
   const collect = () =>
     collectStatus({ metrics, temperatures, services, websites, fail2ban, botStatus });
@@ -100,7 +103,7 @@ export async function main(): Promise<void> {
 
   const scheduler = new StatusLoop({
     updateIntervalSeconds: app.updateIntervalSeconds,
-    channelId,
+    channelIds,
     collect,
     renderer,
     publisher,

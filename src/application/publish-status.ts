@@ -36,7 +36,8 @@ export interface RunResult {
 
 export interface StatusLoopDeps {
   updateIntervalSeconds: number;
-  channelId: string;
+  /** Canales donde publicar. El mensaje de cada uno se edita por separado. */
+  channelIds: string[];
   collect: () => Promise<StatusSnapshot>;
   renderer: StatusRendererPort;
   publisher: StatusPublisherPort;
@@ -57,20 +58,29 @@ export class StatusLoop {
   private lastRunResult: RunResult | null = null;
   private startedAt: Date | null = null;
   private stopped = true;
-  private currentChannelId: string;
+  private currentChannelIds: string[];
 
   constructor(deps: StatusLoopDeps) {
     this.deps = deps;
-    this.currentChannelId = deps.channelId;
+    this.currentChannelIds = [...deps.channelIds];
   }
 
+  get channelIds(): readonly string[] {
+    return this.currentChannelIds;
+  }
+
+  /** Primer canal, para mostrarlo en `/botstatus`. */
   get channelId(): string {
-    return this.currentChannelId;
+    return this.currentChannelIds[0] ?? "";
   }
 
-  /** Cambia el canal de publicacion (`/set_channel`). El siguiente ciclo crea o edita alli. */
+  /**
+   * `/set_channel`: deja ese canal como el unico destino. Es lo que espera quien
+   * lo usa desde un guild concreto; para publicar en varios, la lista va en
+   * `STATUS_CHANNEL_IDS`.
+   */
   setChannel(channelId: string): void {
-    this.currentChannelId = channelId;
+    this.currentChannelIds = [channelId];
     this.deps.logger.info(`canal de publicacion cambiado a ${channelId}`);
   }
 
@@ -84,7 +94,7 @@ export class StatusLoop {
     }, this.deps.updateIntervalSeconds * 1000);
     void this.runOnce("startup");
     this.deps.logger.info(
-      `bucle arrancado: cada ${this.deps.updateIntervalSeconds} s en el canal ${this.currentChannelId}`,
+      `bucle arrancado: cada ${this.deps.updateIntervalSeconds} s en ${this.currentChannelIds.length} canal(es): ${this.currentChannelIds.join(", ")}`,
     );
   }
 
@@ -146,21 +156,26 @@ export class StatusLoop {
       const view = this.deps.renderer.render(snapshot);
       result.level = view.level;
 
-      const existingMessageId = await this.deps.store.getMessageId(this.currentChannelId);
-      const published = await this.deps.publisher.publish(
-        this.currentChannelId,
-        view,
-        existingMessageId,
-      );
-      result.messageId = published.messageId;
-      result.created = published.created;
+      // Un canal caido no puede impedir que se publique en los demas.
+      const failures: string[] = [];
+      for (const channelId of this.currentChannelIds) {
+        try {
+          const existingMessageId = await this.deps.store.getMessageId(channelId);
+          const published = await this.deps.publisher.publish(channelId, view, existingMessageId);
+          result.messageId = published.messageId;
+          result.created = published.created;
 
-      if (published.messageId !== existingMessageId) {
-        await this.deps.store.setMessageId(
-          this.currentChannelId,
-          published.messageId,
-          snapshot.collectedAt,
-        );
+          if (published.messageId !== existingMessageId) {
+            await this.deps.store.setMessageId(channelId, published.messageId, snapshot.collectedAt);
+          }
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          failures.push(`${channelId}: ${detail}`);
+          this.deps.logger.error(`no se ha podido publicar en el canal ${channelId}: ${detail}`);
+        }
+      }
+      if (failures.length === this.currentChannelIds.length) {
+        throw new Error(`no se ha podido publicar en ningun canal: ${failures.join("; ")}`);
       }
 
       await this.dispatchAlerts(snapshot);

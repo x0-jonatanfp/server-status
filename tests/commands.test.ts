@@ -112,7 +112,7 @@ function harness(overrides: { requiredRoles?: string[] } = {}): Harness {
   const store = new JsonStateStore({ path: tmpStatePath(), logger: logger() });
   const loop = new StatusLoop({
     updateIntervalSeconds: config.updateIntervalSeconds,
-    channelId: CHANNEL,
+    channelIds: [CHANNEL],
     collect: async () => snapshot(),
     renderer: { render: () => view() },
     publisher,
@@ -254,7 +254,7 @@ describe("/update", () => {
     const { context } = harness();
     const failing = new StatusLoop({
       updateIntervalSeconds: 300,
-      channelId: CHANNEL,
+      channelIds: [CHANNEL],
       collect: async () => {
         throw new Error("sin datos");
       },

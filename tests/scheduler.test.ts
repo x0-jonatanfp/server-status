@@ -98,16 +98,17 @@ const THRESHOLDS: AlertSettings = {
 
 function build(options: {
   storePath: string;
-  publisher: FakePublisher;
+  publisher: StatusPublisherPort;
   collect?: () => Promise<StatusSnapshot>;
   updateIntervalSeconds?: number;
+  channelIds?: string[];
   alertChecker?: AlertChecker;
   notifier?: { notify(alerts: Alert[]): Promise<void> };
 }): { loop: StatusLoop; store: JsonStateStore } {
   const store = new JsonStateStore({ path: options.storePath, logger: logger() });
   const loop = new StatusLoop({
     updateIntervalSeconds: options.updateIntervalSeconds ?? 300,
-    channelId: CHANNEL,
+    channelIds: options.channelIds ?? [CHANNEL],
     collect: options.collect ?? (async () => snapshot()),
     renderer: { render: () => view() },
     publisher: options.publisher,
@@ -319,5 +320,54 @@ describe("StatusLoop", () => {
 
     loop.setChannel("111111111111111111");
     expect(loop.channelId).toBe("111111111111111111");
+  });
+
+  it("publica en varios canales y mantiene un mensaje por canal", async () => {
+    const publisher = new FakePublisher();
+    const otherChannel = "222222222222222222";
+    const { loop, store } = build({
+      storePath: tmpStatePath(),
+      publisher,
+      channelIds: [CHANNEL, otherChannel],
+    });
+
+    const first = await loop.runOnce("startup");
+    const firstIdA = await store.getMessageId(CHANNEL);
+    const firstIdB = await store.getMessageId(otherChannel);
+
+    expect(first.error).toBeNull();
+    expect(publisher.calls).toHaveLength(2);
+    expect(firstIdA).not.toBeNull();
+    expect(firstIdB).not.toBeNull();
+    expect(firstIdA).not.toBe(firstIdB);
+
+    // El segundo ciclo edita los dos, no crea ninguno nuevo.
+    const second = await loop.runOnce("interval");
+    expect(second.created).toBe(false);
+    expect(publisher.calls).toHaveLength(4);
+    expect(await store.getMessageId(CHANNEL)).toBe(firstIdA);
+    expect(await store.getMessageId(otherChannel)).toBe(firstIdB);
+  });
+
+  it("un canal caido no impide publicar en el resto", async () => {
+    const publisher = new FakePublisher();
+    const failingChannel = "222222222222222222";
+    const flaky: StatusPublisherPort = {
+      async publish(channelId, view_, existingMessageId) {
+        if (channelId === failingChannel) throw new Error("canal sin permisos");
+        return publisher.publish(channelId, view_, existingMessageId);
+      },
+    };
+    const { loop, store } = build({
+      storePath: tmpStatePath(),
+      publisher: flaky,
+      channelIds: [CHANNEL, failingChannel],
+    });
+
+    const result = await loop.runOnce("startup");
+
+    expect(result.error).toBeNull();
+    expect(await store.getMessageId(CHANNEL)).not.toBeNull();
+    expect(await store.getMessageId(failingChannel)).toBeNull();
   });
 });
