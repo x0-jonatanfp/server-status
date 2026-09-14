@@ -2,7 +2,7 @@ NAME := server-status
 DEST := /srv/services/$(NAME)
 SERVICE := $(NAME)
 
-.PHONY: build check deploy restart status logs
+.PHONY: build check install deploy restart status logs
 
 build:
 	pnpm build
@@ -17,6 +17,16 @@ test:
 
 lint:
 	pnpm lint
+
+# Instalacion inicial (una sola vez): unidad de systemd, tmpfiles y logrotate.
+# Necesita sudo. `make deploy` ya solo actualiza el codigo.
+install:
+	sudo install -m 644 deploy/server-status.service /etc/systemd/system/server-status.service
+	sudo install -m 644 deploy/server-status.tmpfiles.conf /etc/tmpfiles.d/server-status.conf
+	sudo install -m 644 deploy/server-status.logrotate.conf /etc/logrotate.d/server-status
+	sudo systemd-tmpfiles --create /etc/tmpfiles.d/server-status.conf
+	sudo systemctl daemon-reload
+	sudo systemctl enable server-status.service
 
 # El bundle de esbuild es autocontenido: dist/index.js no necesita node_modules
 # en destino. Solo viajan el codigo, el manifiesto y el inventario.
