@@ -53,7 +53,7 @@ function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
         totalBytes: 456.9 * 1024 ** 3,
       },
       uptimeSeconds: 4 * 86_400 + 12 * 3600 + 7 * 60,
-      os: { hostname: "void", distro: "Ubuntu 24.04", kernel: "7.0.0" },
+      os: { hostname: "void", distro: "Ubuntu", release: "24.04", kernel: "7.0.0" },
     },
     temperatures: [
       { source: "hwmon", name: "CPU", celsius: 53.6, warn: 75, crit: 90, detail: "k10temp Tctl" },
@@ -130,6 +130,20 @@ describe("renderStatusView", () => {
     );
     expect(critical.level).toBe("critical");
     expect(critical.accentColor).toBe(0xff0040);
+  });
+
+  it("muestra la version base de la distribucion", () => {
+    const view = renderStatusView(
+      snapshot({
+        system: {
+          ...snapshot().system,
+          os: { hostname: "void", distro: "Ubuntu", release: "24.04.5 LTS", kernel: "7.0.0" },
+        },
+      }),
+      options(),
+    );
+
+    expect(view.blocks[0]).toContain("example.com · Ubuntu 24.04 · kernel 7.0.0");
   });
 
   it("marca un servicio caido y cuenta los activos", () => {

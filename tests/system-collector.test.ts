@@ -10,7 +10,7 @@ function fakeApi(overrides: Partial<SystemInformationApi> = {}): SystemInformati
     mem: async () => ({ total: 1000, available: 200 }),
     fsSize: async () => [{ mount: "/", size: 1000, used: 360 }],
     time: async () => ({ uptime: 3600 }),
-    osInfo: async () => ({ hostname: "void", distro: "Ubuntu 24.04", kernel: "7.0.0" }),
+    osInfo: async () => ({ hostname: "void", distro: "Ubuntu", release: "24.04", kernel: "7.0.0" }),
     ...overrides,
   };
 }
@@ -103,5 +103,6 @@ describe.runIf(process.platform === "linux")("collectSystemMetrics en esta maqui
     expect(metrics.uptimeSeconds).toBeGreaterThan(0);
     expect(metrics.os?.hostname).not.toBe("");
     expect(metrics.os?.kernel).not.toBe("");
+    expect(metrics.os?.release).not.toBe("");
   });
 });

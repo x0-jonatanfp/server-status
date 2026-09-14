@@ -124,7 +124,7 @@ function renderHeader(
   ].join(" · ");
   const subtitle = [
     options.hostLabel,
-    os?.distro ?? NOT_AVAILABLE,
+    formatDistribution(os) ?? NOT_AVAILABLE,
     `kernel ${os?.kernel ?? NOT_AVAILABLE}`,
     `up ${formatUptime(uptimeSeconds)}`,
   ]
@@ -137,6 +137,16 @@ function renderHeader(
 interface Section {
   text: string | null;
   levels: Level[];
+}
+
+/**
+ * `Ubuntu 24.04`: `osInfo().distro` solo trae el nombre y `release` trae cosas
+ * como `24.04.5 LTS`, asi que se muestra solo la version base.
+ */
+function formatDistribution(os: StatusSnapshot["system"]["os"]): string | null {
+  if (os === null) return null;
+  const version = /^\d+(\.\d+)?/.exec(os.release)?.[0] ?? os.release;
+  return [os.distro, version].filter((part) => part !== "").join(" ");
 }
 
 function renderResources(snapshot: StatusSnapshot, options: StatusViewOptions): Section {

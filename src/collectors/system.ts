@@ -20,7 +20,7 @@ export interface SystemInformationApi {
   fsSize(): Promise<Array<{ mount: string; size: number; used: number }>>;
   /** En systeminformation `time()` es sincrono. */
   time(): { uptime: number } | Promise<{ uptime: number }>;
-  osInfo(): Promise<{ hostname: string; distro: string; kernel: string }>;
+  osInfo(): Promise<{ hostname: string; distro: string; release: string; kernel: string }>;
 }
 
 export interface ResourceUsage {
@@ -35,7 +35,10 @@ export interface DiskUsage extends ResourceUsage {
 
 export interface OperatingSystemInfo {
   hostname: string;
+  /** Nombre de la distribucion, sin version (`Ubuntu`). */
   distro: string;
+  /** Version de la distribucion (`24.04`). */
+  release: string;
   kernel: string;
 }
 
@@ -122,7 +125,9 @@ export async function collectSystemMetrics(
     memory: memoryUsage,
     disk,
     uptimeSeconds: time ? time.uptime : null,
-    os: os ? { hostname: os.hostname, distro: os.distro, kernel: os.kernel } : null,
+    os: os
+      ? { hostname: os.hostname, distro: os.distro, release: os.release, kernel: os.kernel }
+      : null,
   };
 }
 
