@@ -35,13 +35,14 @@ deploy: build
 	cp package.json inventory.yaml $(DEST)/
 	test -f $(DEST)/.env || { echo "falta $(DEST)/.env"; exit 1; }
 	sudo systemctl restart $(SERVICE).service
-	sudo systemctl is-active --quiet $(SERVICE).service
+	systemctl is-active --quiet $(SERVICE).service
 
 restart:
 	sudo systemctl restart $(SERVICE).service
 
 status:
-	sudo systemctl status $(SERVICE).service --no-pager
+	# Consultar el estado no necesita root: solo el restart lo necesita.
+	systemctl status $(SERVICE).service --no-pager
 
 logs:
 	journalctl -u $(SERVICE).service -n 50 -f
