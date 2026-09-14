@@ -18,8 +18,8 @@ servicios systemd, webs y latencias, en un solo mensaje que se edita.**
   `/sys/class/hwmon` (sin privilegios) y `smartctl` para los SATA.
 - Comprueba las **unidades systemd** y las **webs** que le digas, por HTTP.
 - Muestra el estado y la latencia del propio bot, y el resumen de fail2ban.
-- Envía **alertas por umbral** (CPU, memoria, disco, ping y temperatura) con
-  cooldown, a un canal aparte.
+- Avisa de **umbrales** (CPU, memoria, disco, ping y temperatura) con cooldown:
+  al log del servicio, o a un canal de Discord si defines `ALERT_CHANNEL_ID`.
 - Incluye `/unban` para desbanear una IP de todas las cárceles de fail2ban.
 
 Todo lo que muestra sale de la configuración: no hay hosts, servicios ni canales
