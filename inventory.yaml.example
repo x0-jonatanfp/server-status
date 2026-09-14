@@ -60,7 +60,9 @@ temperatures:
 
 # Que se muestra en el mensaje y con que colores.
 display:
-  show_groups: true
+  # `false` = todos los servicios en un solo flujo, que Discord parte en lineas.
+  # `true` = una linea por grupo (Infra/Apps/Bots).
+  show_groups: false
   show_fail2ban_breakdown: true
   show_ping: true
   progress_bar_blocks: 5
