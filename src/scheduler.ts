@@ -61,9 +61,21 @@ export class Scheduler {
   private lastRunResult: RunResult | null = null;
   private startedAt: Date | null = null;
   private stopped = true;
+  private currentChannelId: string;
 
   constructor(options: SchedulerOptions) {
     this.options = options;
+    this.currentChannelId = options.channelId;
+  }
+
+  get channelId(): string {
+    return this.currentChannelId;
+  }
+
+  /** Cambia el canal de publicacion (`/set_channel`). El siguiente ciclo crea o edita alli. */
+  setChannel(channelId: string): void {
+    this.currentChannelId = channelId;
+    this.options.logger.info(`canal de publicacion cambiado a ${channelId}`);
   }
 
   /** Arranca el bucle: un ciclo inmediato y luego uno por intervalo. */
@@ -76,7 +88,7 @@ export class Scheduler {
     }, this.options.updateIntervalSeconds * 1000);
     void this.runOnce("startup");
     this.options.logger.info(
-      `bucle arrancado: cada ${this.options.updateIntervalSeconds} s en el canal ${this.options.channelId}`,
+      `bucle arrancado: cada ${this.options.updateIntervalSeconds} s en el canal ${this.currentChannelId}`,
     );
   }
 
@@ -138,9 +150,9 @@ export class Scheduler {
       const view = this.options.render(snapshot);
       result.level = view.level;
 
-      const existingMessageId = await this.options.store.getMessageId(this.options.channelId);
+      const existingMessageId = await this.options.store.getMessageId(this.currentChannelId);
       const published = await this.options.publisher.publish(
-        this.options.channelId,
+        this.currentChannelId,
         view,
         existingMessageId,
       );
@@ -148,7 +160,11 @@ export class Scheduler {
       result.created = published.created;
 
       if (published.messageId !== existingMessageId) {
-        await this.options.store.setMessageId(this.options.channelId, published.messageId, snapshot.collectedAt);
+        await this.options.store.setMessageId(
+          this.currentChannelId,
+          published.messageId,
+          snapshot.collectedAt,
+        );
       }
       this.options.logger.debug(
         `ciclo ${reason}: ${published.created ? "mensaje nuevo" : "mensaje editado"} ${published.messageId}`,

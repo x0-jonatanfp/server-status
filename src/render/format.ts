@@ -55,6 +55,12 @@ export function formatClock(date: Date): string {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+/** Antiguedad de algo: `hace 12 s`, `hace 01h 05m`. */
+export function formatAgo(seconds: number): string {
+  const total = Math.max(0, seconds);
+  return total < 60 ? `hace ${Math.round(total)} s` : `hace ${formatUptime(total)}`;
+}
+
 /** Intervalo entre actualizaciones, en la unidad que mejor se lea. */
 export function formatInterval(seconds: number): string {
   if (seconds < 60) return `${seconds} s`;

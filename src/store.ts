@@ -26,6 +26,12 @@ export interface ChannelState {
 
 export interface BotState {
   version: number;
+  /**
+   * Canal elegido con `/set_channel`. Si es `null` se usa el del `.env`.
+   * Se persiste para que la eleccion sobreviva a un reinicio (el bot antiguo
+   * escribia su configuracion en un fichero que nadie volvia a leer).
+   */
+  statusChannelId: string | null;
   channels: Record<string, ChannelState>;
 }
 
@@ -35,7 +41,7 @@ export interface StateStoreOptions {
 }
 
 function emptyState(): BotState {
-  return { version: STATE_VERSION, channels: {} };
+  return { version: STATE_VERSION, statusChannelId: null, channels: {} };
 }
 
 export class StateStore {
@@ -82,6 +88,17 @@ export class StateStore {
     return (await this.getChannelState(channelId))?.messageId ?? null;
   }
 
+  /** Canal fijado con `/set_channel`, o `null` si nunca se ha fijado. */
+  async getStatusChannelId(): Promise<string | null> {
+    return (await this.snapshot()).statusChannelId;
+  }
+
+  async setStatusChannelId(channelId: string | null): Promise<void> {
+    const state = await this.snapshot();
+    state.statusChannelId = channelId;
+    await this.save();
+  }
+
   /** Fija el id del mensaje vigente de un canal y lo persiste. */
   async setMessageId(channelId: string, messageId: string | null, updatedAt = new Date()): Promise<void> {
     const state = await this.snapshot();
@@ -103,11 +120,17 @@ export function parseState(raw: string): BotState {
   const parsed: unknown = JSON.parse(raw);
   if (typeof parsed !== "object" || parsed === null) throw new Error("el estado no es un objeto");
 
-  const { version, channels } = parsed as { version?: unknown; channels?: unknown };
+  const { version, channels, statusChannelId } = parsed as {
+    version?: unknown;
+    channels?: unknown;
+    statusChannelId?: unknown;
+  };
   if (version !== STATE_VERSION) throw new Error(`version de estado desconocida: ${String(version)}`);
   if (typeof channels !== "object" || channels === null) throw new Error("el estado no tiene canales");
 
   const state = emptyState();
+  // Campo anadido despues: un estado antiguo sin el sigue siendo valido.
+  state.statusChannelId = typeof statusChannelId === "string" ? statusChannelId : null;
   for (const [channelId, value] of Object.entries(channels as Record<string, unknown>)) {
     if (typeof value !== "object" || value === null) continue;
     const { messageId, updatedAt } = value as { messageId?: unknown; updatedAt?: unknown };

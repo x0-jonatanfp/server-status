@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { VERSION } from "../src/version.ts";
 import {
+  formatAgo,
   formatBytes,
   formatCelsius,
   formatClock,
@@ -81,6 +82,14 @@ describe("formatClock y formatInterval", () => {
     expect(formatInterval(30)).toBe("30 s");
     expect(formatInterval(300)).toBe("5 min");
     expect(formatInterval(90)).toBe("1.5 min");
+  });
+
+  it("mide la antiguedad en segundos o en horas y minutos", () => {
+    expect(formatAgo(12)).toBe("hace 12 s");
+    expect(formatAgo(59.6)).toBe("hace 60 s");
+    expect(formatAgo(60)).toBe("hace 00h 01m");
+    expect(formatAgo(3600 + 60)).toBe("hace 01h 01m");
+    expect(formatAgo(-5)).toBe("hace 0 s");
   });
 });
 
