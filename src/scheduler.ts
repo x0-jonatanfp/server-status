@@ -1,0 +1,166 @@
+/**
+ * Bucle de actualizacion.
+ *
+ * Un ciclo recolecta el snapshot, lo renderiza, lo publica (editando el mensaje
+ * existente) y persiste el id resultante. El intervalo sale siempre de la
+ * configuracion (`UPDATE_INTERVAL`), no de una constante: el bug del bot antiguo
+ * era justamente que `BOT_UPDATE_INTERVAL` no cambiaba nada.
+ *
+ * Dos garantias pensadas para Discord:
+ * - los ciclos no se solapan: si uno sigue en marcha, el siguiente reutiliza su
+ *   resultado en lugar de lanzar una segunda edicion sobre el mismo mensaje.
+ * - un fallo de recoleccion o de publicacion se registra y se devuelve en el
+ *   resultado; no para el bucle ni tumba el proceso.
+ */
+import type winston from "winston";
+
+import type { StatusSnapshot } from "./collectors/index.ts";
+import type { Level } from "./render/thresholds.ts";
+import type { StatusView } from "./render/statusView.ts";
+import type { StateStore } from "./store.ts";
+
+export type RunReason = "startup" | "interval" | "manual";
+
+export interface PublishResult {
+  messageId: string;
+  /** `true` si hubo que crear el mensaje porque ya no existia. */
+  created: boolean;
+}
+
+/** Puerto hacia Discord: el scheduler no sabe nada de discord.js. */
+export interface StatusPublisher {
+  publish(channelId: string, view: StatusView, existingMessageId: string | null): Promise<PublishResult>;
+}
+
+export interface RunResult {
+  reason: RunReason;
+  at: Date;
+  durationMs: number;
+  level: Level | null;
+  messageId: string | null;
+  created: boolean;
+  error: string | null;
+}
+
+export interface SchedulerOptions {
+  updateIntervalSeconds: number;
+  channelId: string;
+  collect: () => Promise<StatusSnapshot>;
+  render: (snapshot: StatusSnapshot) => StatusView;
+  publisher: StatusPublisher;
+  store: StateStore;
+  logger: Pick<winston.Logger, "info" | "warn" | "error" | "debug">;
+  /** Se llama al terminar cada ciclo (exito o error). */
+  onRun?: (result: RunResult) => void;
+}
+
+export class Scheduler {
+  private readonly options: SchedulerOptions;
+  private timer: NodeJS.Timeout | null = null;
+  private current: Promise<RunResult> | null = null;
+  private lastRunResult: RunResult | null = null;
+  private startedAt: Date | null = null;
+  private stopped = true;
+
+  constructor(options: SchedulerOptions) {
+    this.options = options;
+  }
+
+  /** Arranca el bucle: un ciclo inmediato y luego uno por intervalo. */
+  start(): void {
+    if (!this.stopped) return;
+    this.stopped = false;
+    this.startedAt = new Date();
+    this.timer = setInterval(() => {
+      void this.runOnce("interval");
+    }, this.options.updateIntervalSeconds * 1000);
+    void this.runOnce("startup");
+    this.options.logger.info(
+      `bucle arrancado: cada ${this.options.updateIntervalSeconds} s en el canal ${this.options.channelId}`,
+    );
+  }
+
+  /** Para el bucle y espera al ciclo en curso. */
+  async stop(): Promise<void> {
+    this.stopped = true;
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    if (this.current) {
+      await this.current.catch(() => undefined);
+    }
+    this.options.logger.info("bucle parado");
+  }
+
+  get lastRun(): RunResult | null {
+    return this.lastRunResult;
+  }
+
+  get startedAtDate(): Date | null {
+    return this.startedAt;
+  }
+
+  get isRunning(): boolean {
+    return this.current !== null;
+  }
+
+  /**
+   * Ejecuta un ciclo. Si ya hay uno en marcha devuelve su promesa en lugar de
+   * lanzar otro: dos ediciones simultaneas sobre el mismo mensaje solo generan
+   * errores de Discord y mensajes duplicados.
+   */
+  async runOnce(reason: RunReason): Promise<RunResult> {
+    if (this.current) return this.current;
+    const execution = this.execute(reason);
+    this.current = execution;
+    try {
+      return await execution;
+    } finally {
+      this.current = null;
+    }
+  }
+
+  private async execute(reason: RunReason): Promise<RunResult> {
+    const startedAt = Date.now();
+    const result: RunResult = {
+      reason,
+      at: new Date(startedAt),
+      durationMs: 0,
+      level: null,
+      messageId: null,
+      created: false,
+      error: null,
+    };
+
+    try {
+      const snapshot = await this.options.collect();
+      const view = this.options.render(snapshot);
+      result.level = view.level;
+
+      const existingMessageId = await this.options.store.getMessageId(this.options.channelId);
+      const published = await this.options.publisher.publish(
+        this.options.channelId,
+        view,
+        existingMessageId,
+      );
+      result.messageId = published.messageId;
+      result.created = published.created;
+
+      if (published.messageId !== existingMessageId) {
+        await this.options.store.setMessageId(this.options.channelId, published.messageId, snapshot.collectedAt);
+      }
+      this.options.logger.debug(
+        `ciclo ${reason}: ${published.created ? "mensaje nuevo" : "mensaje editado"} ${published.messageId}`,
+      );
+    } catch (error) {
+      result.error = error instanceof Error ? error.message : String(error);
+      this.options.logger.error(`ciclo ${reason} fallido: ${result.error}`);
+    }
+
+    result.durationMs = Date.now() - startedAt;
+    this.lastRunResult = result;
+    this.options.onRun?.(result);
+    return result;
+  }
+}
