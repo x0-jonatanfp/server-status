@@ -2,7 +2,11 @@ import { execFileSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
-import { collectSystemMetrics, type SystemInformationApi } from "../src/collectors/system.ts";
+import {
+  collectSystemMetrics,
+  createSystemMetricsPort,
+  type SystemInformationApi,
+} from "../src/infrastructure/metrics/system-information.ts";
 
 function fakeApi(overrides: Partial<SystemInformationApi> = {}): SystemInformationApi {
   return {
@@ -19,14 +23,14 @@ describe("collectSystemMetrics", () => {
   it("calcula el disco como used / size", async () => {
     // size 1000 y used 360 dan 36 %; el campo `use` de systeminformation (que
     // mide used / (used + available)) daria 40 %.
-    const metrics = await collectSystemMetrics({ diskMount: "/", api: fakeApi() });
+    const metrics = await collectSystemMetrics(fakeApi(), "/");
     expect(metrics.disk?.percent).toBeCloseTo(36, 5);
     expect(metrics.disk?.usedBytes).toBe(360);
     expect(metrics.disk?.totalBytes).toBe(1000);
   });
 
   it("calcula la RAM como total - available", async () => {
-    const metrics = await collectSystemMetrics({ diskMount: "/", api: fakeApi() });
+    const metrics = await collectSystemMetrics(fakeApi(), "/");
     expect(metrics.memory?.usedBytes).toBe(800);
     expect(metrics.memory?.percent).toBeCloseTo(80, 5);
   });
@@ -39,17 +43,17 @@ describe("collectSystemMetrics", () => {
       ],
     });
 
-    const nested = await collectSystemMetrics({ diskMount: "/home", api });
+    const nested = await collectSystemMetrics(api, "/home");
     expect(nested.disk?.mount).toBe("/home");
     expect(nested.disk?.percent).toBeCloseTo(50, 5);
 
-    const child = await collectSystemMetrics({ diskMount: "/home/cultofskaro", api });
+    const child = await collectSystemMetrics(api, "/home/cultofskaro");
     expect(child.disk?.mount).toBe("/home");
   });
 
   it("devuelve null si el punto de montaje no existe", async () => {
     const api = fakeApi({ fsSize: async () => [{ mount: "/home", size: 500, used: 250 }] });
-    const metrics = await collectSystemMetrics({ diskMount: "/srv", api });
+    const metrics = await collectSystemMetrics(api, "/srv");
     expect(metrics.disk).toBeNull();
   });
 
@@ -63,19 +67,25 @@ describe("collectSystemMetrics", () => {
       },
     });
 
-    const metrics = await collectSystemMetrics({ diskMount: "/", api });
+    const metrics = await collectSystemMetrics(api, "/");
     expect(metrics.memory).toBeNull();
     expect(metrics.os).toBeNull();
     expect(metrics.cpuPercent).toBeCloseTo(12.5, 5);
     expect(metrics.disk?.percent).toBeCloseTo(36, 5);
     expect(metrics.uptimeSeconds).toBe(3600);
   });
+
+  it("implementa el puerto de metricas", async () => {
+    const port = createSystemMetricsPort({ diskMount: "/", api: fakeApi() });
+    await expect(port.collect()).resolves.toMatchObject({ cpuPercent: 12.5 });
+  });
 });
 
 describe.runIf(process.platform === "linux")("collectSystemMetrics en esta maquina", () => {
   it("el porcentaje de disco coincide con df (used / size) en +-1 %", async () => {
     const mount = "/";
-    const metrics = await collectSystemMetrics({ diskMount: mount });
+    const port = createSystemMetricsPort({ diskMount: mount });
+    const metrics = await port.collect();
 
     // `df --output=size,used` da las mismas dos magnitudes que se usan en el
     // calculo. (La columna Uso% de `df -h` divide por used + available, asi que
@@ -93,7 +103,7 @@ describe.runIf(process.platform === "linux")("collectSystemMetrics en esta maqui
   });
 
   it("devuelve CPU, RAM, uptime y datos del sistema plausibles", async () => {
-    const metrics = await collectSystemMetrics({ diskMount: "/" });
+    const metrics = await createSystemMetricsPort({ diskMount: "/" }).collect();
 
     expect(metrics.cpuPercent).toBeGreaterThanOrEqual(0);
     expect(metrics.cpuPercent).toBeLessThanOrEqual(100);

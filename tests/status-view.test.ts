@@ -2,19 +2,20 @@ import { MessageFlags } from "discord.js";
 import { expect, describe, it } from "vitest";
 
 import type {
-  DisplayConfig,
+  DisplaySettings,
   MetricKey,
   MetricThreshold,
-} from "../src/config.ts";
-import type { StatusSnapshot } from "../src/collectors/index.ts";
+} from "../src/domain/entities/inventory.ts";
+import type { StatusSnapshot } from "../src/domain/entities/status-snapshot.ts";
 import {
   countComponents,
+  createStatusRenderer,
   renderStatusView,
   toComponents,
-  type StatusViewOptions,
-} from "../src/render/statusView.ts";
+  type StatusRendererOptions,
+} from "../src/infrastructure/discord/status-view.ts";
 
-const DISPLAY: DisplayConfig = {
+const DISPLAY: DisplaySettings = {
   showGroups: true,
   showFail2banBreakdown: true,
   showPing: true,
@@ -29,7 +30,7 @@ const THRESHOLDS: Record<MetricKey, MetricThreshold> = {
   ping_ms: { warn: 100, crit: 500 },
 };
 
-function options(overrides: Partial<StatusViewOptions> = {}): StatusViewOptions {
+function options(overrides: Partial<StatusRendererOptions> = {}): StatusRendererOptions {
   return {
     display: DISPLAY,
     thresholds: THRESHOLDS,
@@ -193,7 +194,7 @@ describe("renderStatusView", () => {
   });
 
   it("respetando el bloque display del inventario", () => {
-    const display: DisplayConfig = {
+    const display: DisplaySettings = {
       ...DISPLAY,
       showGroups: false,
       showFail2banBreakdown: false,
@@ -260,6 +261,13 @@ describe("renderStatusView", () => {
     for (const block of view.blocks) {
       expect(block.length).toBeLessThanOrEqual(4000);
     }
+  });
+});
+
+describe("createStatusRenderer", () => {
+  it("implementa el puerto de render con la configuracion ya fijada", () => {
+    const renderer = createStatusRenderer(options());
+    expect(renderer.render(snapshot())).toEqual(renderStatusView(snapshot(), options()));
   });
 });
 

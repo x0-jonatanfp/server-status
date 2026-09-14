@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { ServiceGroupConfig } from "../src/config.ts";
-import type { ExecFileFn } from "../src/collectors/exec.ts";
-import { collectServices } from "../src/collectors/services.ts";
+import type { ServiceGroup } from "../src/domain/entities/inventory.ts";
+import type { ExecFileFn } from "../src/infrastructure/exec.ts";
+import { createServiceStatusPort } from "../src/infrastructure/systemd/service-status.ts";
 
 /** Salida real de `systemctl show -p Id,LoadState,ActiveState,SubState`. */
 const SYSTEMCTL_OUTPUT = [
@@ -30,17 +30,17 @@ const SYSTEMCTL_OUTPUT = [
 
 const execReturning = (stdout: string): ExecFileFn => async () => ({ stdout, stderr: "" });
 
-const GROUPS: ServiceGroupConfig[] = [
+const GROUPS: ServiceGroup[] = [
   { group: "Infra", units: ["nginx", "fail2ban", "redis-server", "no-such-unit-xyz"] },
   { group: "Apps", units: ["nginx"] },
 ];
 
-describe("collectServices", () => {
+describe("createServiceStatusPort", () => {
   it("agrupa las unidades del inventario y traduce su estado", async () => {
-    const groups = await collectServices({
+    const groups = await createServiceStatusPort({
       groups: GROUPS,
       exec: execReturning(SYSTEMCTL_OUTPUT),
-    });
+    }).collect();
 
     expect(groups.map((group) => group.group)).toEqual(["Infra", "Apps"]);
     expect(groups[0]?.units).toEqual([
@@ -59,7 +59,11 @@ describe("collectServices", () => {
       return { stdout: SYSTEMCTL_OUTPUT, stderr: "" };
     };
 
-    await collectServices({ groups: GROUPS, exec, systemctlPath: "/usr/bin/systemctl" });
+    await createServiceStatusPort({
+      groups: GROUPS,
+      exec,
+      systemctlPath: "/usr/bin/systemctl",
+    }).collect();
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.slice(0, 3)).toEqual(["/usr/bin/systemctl", "show", "-p"]);
@@ -72,7 +76,7 @@ describe("collectServices", () => {
       throw new Error("systemd no responde");
     };
 
-    const groups = await collectServices({ groups: GROUPS, exec });
+    const groups = await createServiceStatusPort({ groups: GROUPS, exec }).collect();
 
     expect(groups[0]?.units.map((unit) => unit.state)).toEqual([
       "unknown",
@@ -83,10 +87,10 @@ describe("collectServices", () => {
   });
 
   it("reporta unknown si la unidad no sale en la respuesta", async () => {
-    const groups = await collectServices({
+    const groups = await createServiceStatusPort({
       groups: [{ group: "Infra", units: ["nginx", "otra"] }],
       exec: execReturning("Id=nginx.service\nLoadState=loaded\nActiveState=active\n"),
-    });
+    }).collect();
 
     expect(groups[0]?.units).toEqual([
       { unit: "nginx", state: "active" },
@@ -95,31 +99,28 @@ describe("collectServices", () => {
   });
 
   it("trata un LoadState roto como unknown", async () => {
-    const groups = await collectServices({
+    const groups = await createServiceStatusPort({
       groups: [{ group: "Infra", units: ["rota"] }],
       exec: execReturning("Id=rota.service\nLoadState=error\nActiveState=inactive\n"),
-    });
+    }).collect();
 
     expect(groups[0]?.units[0]?.state).toBe("unknown");
   });
 
   it("no lanza con una lista de grupos vacia", async () => {
-    await expect(collectServices({ groups: [], exec: execReturning("") })).resolves.toEqual([]);
+    await expect(
+      createServiceStatusPort({ groups: [], exec: execReturning("") }).collect(),
+    ).resolves.toEqual([]);
   });
 
-  it.skipIf(process.platform !== "linux")(
-    "lee el estado real de systemd sin sudo",
-    async () => {
-      const groups = await collectServices({
-        groups: [
-          { group: "Infra", units: ["nginx", "no-such-unit-xyz"] },
-        ],
-      });
+  it.skipIf(process.platform !== "linux")("lee el estado real de systemd sin sudo", async () => {
+    const groups = await createServiceStatusPort({
+      groups: [{ group: "Infra", units: ["nginx", "no-such-unit-xyz"] }],
+    }).collect();
 
-      expect(groups[0]?.units).toEqual([
-        { unit: "nginx", state: "active" },
-        { unit: "no-such-unit-xyz", state: "unknown" },
-      ]);
-    },
-  );
+    expect(groups[0]?.units).toEqual([
+      { unit: "nginx", state: "active" },
+      { unit: "no-such-unit-xyz", state: "unknown" },
+    ]);
+  });
 });

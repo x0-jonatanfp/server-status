@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { collectWebsites } from "../src/collectors/websites.ts";
+import {
+  createWebsiteProbePort,
+  probeWebsites,
+} from "../src/infrastructure/http/website-probe.ts";
 
 const WEBSITES = [
   { url: "https://uno.example", label: "uno" },
@@ -8,17 +11,14 @@ const WEBSITES = [
   { url: "https://tres.example", label: "tres" },
 ];
 
-/** Respuesta minima: `collectWebsites` solo mira status y body. */
+/** Respuesta minima: el adaptador solo mira el estado y cancela el cuerpo. */
 function jsonResponse(status: number): Response {
   return new Response(status === 204 ? null : "cuerpo", { status });
 }
 
-describe("collectWebsites", () => {
+describe("probeWebsites", () => {
   it("marca como arriba un 200 y mide la latencia", async () => {
-    const statuses = await collectWebsites({
-      websites: [WEBSITES[0]!],
-      fetchFn: async () => jsonResponse(200),
-    });
+    const statuses = await probeWebsites([WEBSITES[0]!], async () => jsonResponse(200), 1000);
 
     expect(statuses).toHaveLength(1);
     expect(statuses[0]).toMatchObject({ label: "uno", up: true, statusCode: 200, error: null });
@@ -26,10 +26,7 @@ describe("collectWebsites", () => {
   });
 
   it("marca como caida un 5xx, sin lanzar", async () => {
-    const statuses = await collectWebsites({
-      websites: [WEBSITES[0]!],
-      fetchFn: async () => jsonResponse(503),
-    });
+    const statuses = await probeWebsites([WEBSITES[0]!], async () => jsonResponse(503), 1000);
 
     // Hubo respuesta, asi que se mide la latencia aunque el estado sea caida.
     expect(statuses[0]).toMatchObject({ up: false, statusCode: 503 });
@@ -38,11 +35,7 @@ describe("collectWebsites", () => {
   });
 
   it("marca como caida un 404", async () => {
-    const statuses = await collectWebsites({
-      websites: [WEBSITES[0]!],
-      fetchFn: async () => jsonResponse(404),
-    });
-
+    const statuses = await probeWebsites([WEBSITES[0]!], async () => jsonResponse(404), 1000);
     expect(statuses[0]?.up).toBe(false);
   });
 
@@ -56,13 +49,14 @@ describe("collectWebsites", () => {
       });
     };
 
-    const statuses = await collectWebsites({
-      websites: [WEBSITES[0]!],
-      fetchFn,
-      timeoutMs: 10,
-    });
+    const statuses = await probeWebsites([WEBSITES[0]!], fetchFn, 10);
 
-    expect(statuses[0]).toMatchObject({ up: false, statusCode: null, latencyMs: null, error: "timeout" });
+    expect(statuses[0]).toMatchObject({
+      up: false,
+      statusCode: null,
+      latencyMs: null,
+      error: "timeout",
+    });
   });
 
   it("reporta un fallo de red como caida y sigue con las demas webs", async () => {
@@ -71,7 +65,7 @@ describe("collectWebsites", () => {
       return jsonResponse(200);
     };
 
-    const statuses = await collectWebsites({ websites: WEBSITES, fetchFn });
+    const statuses = await probeWebsites(WEBSITES, fetchFn, 1000);
 
     expect(statuses.map((status) => status.up)).toEqual([true, false, true]);
     expect(statuses[1]?.error).toBe("getaddrinfo ENOTFOUND");
@@ -85,12 +79,25 @@ describe("collectWebsites", () => {
       return jsonResponse(200);
     };
 
-    await collectWebsites({ websites: [WEBSITES[0]!], fetchFn, timeoutMs: 1234 });
+    await probeWebsites([WEBSITES[0]!], fetchFn, 1234);
 
     expect(timeouts).toEqual([1]);
   });
 
   it("no lanza con una lista vacia", async () => {
-    await expect(collectWebsites({ websites: [] })).resolves.toEqual([]);
+    await expect(probeWebsites([], fetch, 1000)).resolves.toEqual([]);
+  });
+});
+
+describe("createWebsiteProbePort", () => {
+  it("implementa el puerto y usa su propio timeout", async () => {
+    const port = createWebsiteProbePort({
+      websites: WEBSITES,
+      timeoutMs: 2000,
+      fetchFn: async () => jsonResponse(200),
+    });
+
+    const statuses = await port.probe();
+    expect(statuses.map((status) => status.up)).toEqual([true, true, true]);
   });
 });

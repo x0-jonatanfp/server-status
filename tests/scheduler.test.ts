@@ -4,11 +4,17 @@ import { join } from "node:path";
 
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
-import { AlertManager, type Alert } from "../src/alerts/alertManager.ts";
-import type { StatusSnapshot } from "../src/collectors/index.ts";
-import type { StatusView } from "../src/render/statusView.ts";
-import { Scheduler, type PublishResult, type StatusPublisher } from "../src/scheduler.ts";
-import { StateStore } from "../src/store.ts";
+import { AlertChecker } from "../src/application/check-alerts.ts";
+import { StatusLoop } from "../src/application/publish-status.ts";
+import type { Alert } from "../src/domain/entities/alert.ts";
+import type { AlertSettings } from "../src/domain/entities/inventory.ts";
+import type { StatusSnapshot } from "../src/domain/entities/status-snapshot.ts";
+import type { StatusView } from "../src/domain/entities/status-view.ts";
+import type {
+  PublishResult,
+  StatusPublisherPort,
+} from "../src/domain/ports/status-publisher.ts";
+import { JsonStateStore } from "../src/infrastructure/persistence/state-store.ts";
 
 const CHANNEL = "111111111111111111";
 
@@ -58,7 +64,7 @@ function logger() {
  * Publisher de mentira que imita a Discord: guarda los mensajes publicados y,
  * como Discord, falla al editar uno que ya no existe.
  */
-class FakePublisher implements StatusPublisher {
+class FakePublisher implements StatusPublisherPort {
   readonly messages = new Map<string, StatusView>();
   readonly calls: Array<{ existing: string | null; published: string }> = [];
   private counter = 0;
@@ -80,36 +86,46 @@ class FakePublisher implements StatusPublisher {
   }
 }
 
+const THRESHOLDS: AlertSettings = {
+  cooldownMinutes: 30,
+  thresholds: {
+    cpu_percent: { warn: 70, crit: 90 },
+    memory_percent: { warn: 70, crit: 90 },
+    disk_percent: { warn: 80, crit: 95 },
+    ping_ms: { warn: 100, crit: 500 },
+  },
+};
+
 function build(options: {
   storePath: string;
   publisher: FakePublisher;
   collect?: () => Promise<StatusSnapshot>;
   updateIntervalSeconds?: number;
-  alerts?: AlertManager;
-  notifyAlerts?: (alerts: Alert[]) => Promise<void>;
-}): { scheduler: Scheduler; store: StateStore } {
-  const store = new StateStore({ path: options.storePath, logger: logger() });
-  const scheduler = new Scheduler({
+  alertChecker?: AlertChecker;
+  notifier?: { notify(alerts: Alert[]): Promise<void> };
+}): { loop: StatusLoop; store: JsonStateStore } {
+  const store = new JsonStateStore({ path: options.storePath, logger: logger() });
+  const loop = new StatusLoop({
     updateIntervalSeconds: options.updateIntervalSeconds ?? 300,
     channelId: CHANNEL,
     collect: options.collect ?? (async () => snapshot()),
-    render: () => view(),
+    renderer: { render: () => view() },
     publisher: options.publisher,
     store,
     logger: logger(),
-    ...(options.alerts ? { alerts: options.alerts } : {}),
-    ...(options.notifyAlerts ? { notifyAlerts: options.notifyAlerts } : {}),
+    ...(options.alertChecker ? { alertChecker: options.alertChecker } : {}),
+    ...(options.notifier ? { notifier: options.notifier } : {}),
   });
-  return { scheduler, store };
+  return { loop, store };
 }
 
-describe("Scheduler", () => {
+describe("StatusLoop", () => {
   it("dos ciclos producen un solo mensaje, editado", async () => {
     const publisher = new FakePublisher();
-    const { scheduler } = build({ storePath: tmpStatePath(), publisher });
+    const { loop } = build({ storePath: tmpStatePath(), publisher });
 
-    const first = await scheduler.runOnce("startup");
-    const second = await scheduler.runOnce("interval");
+    const first = await loop.runOnce("startup");
+    const second = await loop.runOnce("interval");
 
     expect(first.created).toBe(true);
     expect(second.created).toBe(false);
@@ -126,11 +142,11 @@ describe("Scheduler", () => {
     const publisher = new FakePublisher();
 
     const before = build({ storePath, publisher });
-    const run = await before.scheduler.runOnce("startup");
+    const run = await before.loop.runOnce("startup");
 
-    // Reinicio: otro scheduler y otro store, el mismo fichero de estado.
+    // Reinicio: otro bucle y otro store, el mismo fichero de estado.
     const after = build({ storePath, publisher });
-    const restarted = await after.scheduler.runOnce("startup");
+    const restarted = await after.loop.runOnce("startup");
 
     expect(restarted.messageId).toBe(run.messageId);
     expect(restarted.created).toBe(false);
@@ -140,11 +156,11 @@ describe("Scheduler", () => {
   it("reenvia el mensaje y actualiza el id si ya no existe", async () => {
     const storePath = tmpStatePath();
     const publisher = new FakePublisher();
-    const { scheduler, store } = build({ storePath, publisher });
+    const { loop, store } = build({ storePath, publisher });
 
     // Estado de un mensaje que se ha borrado a mano en Discord.
     await store.setMessageId(CHANNEL, "mensaje-borrado");
-    const result = await scheduler.runOnce("interval");
+    const result = await loop.runOnce("interval");
 
     expect(result.created).toBe(true);
     expect(result.messageId).toBe("mensaje-1");
@@ -154,7 +170,7 @@ describe("Scheduler", () => {
   it("un fallo de recoleccion no para el bucle", async () => {
     const publisher = new FakePublisher();
     let calls = 0;
-    const { scheduler } = build({
+    const { loop } = build({
       storePath: tmpStatePath(),
       publisher,
       collect: async () => {
@@ -164,11 +180,11 @@ describe("Scheduler", () => {
       },
     });
 
-    const failed = await scheduler.runOnce("startup");
+    const failed = await loop.runOnce("startup");
     expect(failed.error).toContain("systeminformation");
     expect(failed.messageId).toBeNull();
 
-    const ok = await scheduler.runOnce("interval");
+    const ok = await loop.runOnce("interval");
     expect(ok.error).toBeNull();
     expect(ok.created).toBe(true);
     expect(publisher.messages.size).toBe(1);
@@ -177,7 +193,7 @@ describe("Scheduler", () => {
   it("no solapa dos ciclos", async () => {
     const publisher = new FakePublisher();
     let collectCalls = 0;
-    const { scheduler } = build({
+    const { loop } = build({
       storePath: tmpStatePath(),
       publisher,
       collect: async () => {
@@ -187,7 +203,7 @@ describe("Scheduler", () => {
       },
     });
 
-    const [a, b] = await Promise.all([scheduler.runOnce("manual"), scheduler.runOnce("interval")]);
+    const [a, b] = await Promise.all([loop.runOnce("manual"), loop.runOnce("interval")]);
 
     expect(collectCalls).toBe(1);
     expect(a).toBe(b);
@@ -197,7 +213,7 @@ describe("Scheduler", () => {
   it("usa el intervalo de la configuracion y para al pararlo", async () => {
     const publisher = new FakePublisher();
     let collectCalls = 0;
-    const { scheduler } = build({
+    const { loop } = build({
       storePath: tmpStatePath(),
       publisher,
       // 0,02 s: el intervalo es el de la configuracion, no una constante.
@@ -208,7 +224,7 @@ describe("Scheduler", () => {
       },
     });
 
-    scheduler.start();
+    loop.start();
     // El arranque dispara un ciclo inmediato.
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(collectCalls).toBeGreaterThanOrEqual(1);
@@ -219,7 +235,7 @@ describe("Scheduler", () => {
     // Se edita el mismo mensaje en cada ciclo.
     expect(publisher.messages.size).toBe(1);
 
-    await scheduler.stop();
+    await loop.stop();
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(collectCalls).toBe(afterInterval);
   });
@@ -227,81 +243,81 @@ describe("Scheduler", () => {
   it("envia las alertas y respeta el cooldown entre ciclos", async () => {
     let now = 1_000_000;
     const sent: Alert[][] = [];
-    const alerts = new AlertManager({
-      cooldownMinutes: 30,
-      thresholds: {
-        cpu_percent: { warn: 70, crit: 90 },
-        memory_percent: { warn: 70, crit: 90 },
-        disk_percent: { warn: 80, crit: 95 },
-        ping_ms: { warn: 100, crit: 500 },
-      },
-      now: () => now,
-    });
+    const alertChecker = new AlertChecker({ settings: THRESHOLDS, now: () => now });
 
     const hot = snapshot();
     hot.temperatures = [
       { source: "hwmon", name: "CPU", celsius: 95, warn: 75, crit: 90, detail: "k10temp Tctl" },
     ];
 
-    const { scheduler } = build({
+    const { loop } = build({
       storePath: tmpStatePath(),
       publisher: new FakePublisher(),
       collect: async () => hot,
-      alerts,
-      notifyAlerts: async (pending) => {
-        sent.push(pending);
+      alertChecker,
+      notifier: {
+        notify: async (pending) => {
+          sent.push(pending);
+        },
       },
     });
 
-    await scheduler.runOnce("startup");
+    await loop.runOnce("startup");
     expect(sent).toHaveLength(1);
     expect(sent[0]?.[0]?.key).toBe("temperature:CPU");
 
     // Siguiente ciclo dentro del cooldown: no se repite.
     now += 5 * 60_000;
-    await scheduler.runOnce("interval");
+    await loop.runOnce("interval");
     expect(sent).toHaveLength(1);
 
     // Pasado el cooldown vuelve a avisar.
     now += 30 * 60_000;
-    await scheduler.runOnce("interval");
+    await loop.runOnce("interval");
     expect(sent).toHaveLength(2);
   });
 
   it("un fallo al enviar alertas no cambia el resultado del ciclo", async () => {
-    const alerts = new AlertManager({
-      cooldownMinutes: 30,
-      thresholds: {
-        cpu_percent: { warn: 1, crit: 2 },
-        memory_percent: { warn: 1, crit: 2 },
-        disk_percent: { warn: 1, crit: 2 },
-        ping_ms: { warn: 1, crit: 2 },
+    const alertChecker = new AlertChecker({
+      settings: {
+        cooldownMinutes: 30,
+        thresholds: {
+          cpu_percent: { warn: 1, crit: 2 },
+          memory_percent: { warn: 1, crit: 2 },
+          disk_percent: { warn: 1, crit: 2 },
+          ping_ms: { warn: 1, crit: 2 },
+        },
       },
     });
 
-    const { scheduler } = build({
+    const { loop } = build({
       storePath: tmpStatePath(),
       publisher: new FakePublisher(),
-      alerts,
-      notifyAlerts: async () => {
-        throw new Error("Discord no acepta el mensaje");
+      alertChecker,
+      notifier: {
+        notify: async () => {
+          throw new Error("Discord no acepta el mensaje");
+        },
       },
     });
 
-    const result = await scheduler.runOnce("startup");
+    const result = await loop.runOnce("startup");
     expect(result.error).toBeNull();
     expect(result.created).toBe(true);
   });
 
-  it("guarda el resultado del ultimo ciclo", async () => {
+  it("guarda el resultado del ultimo ciclo y el canal vigente", async () => {
     const publisher = new FakePublisher();
-    const { scheduler } = build({ storePath: tmpStatePath(), publisher });
+    const { loop } = build({ storePath: tmpStatePath(), publisher });
 
-    expect(scheduler.lastRun).toBeNull();
-    const result = await scheduler.runOnce("manual");
-    expect(scheduler.lastRun).toBe(result);
+    expect(loop.lastRun).toBeNull();
+    const result = await loop.runOnce("manual");
+    expect(loop.lastRun).toBe(result);
     expect(result.reason).toBe("manual");
     expect(result.level).toBe("ok");
     expect(typeof result.durationMs).toBe("number");
+
+    loop.setChannel("111111111111111111");
+    expect(loop.channelId).toBe("111111111111111111");
   });
 });

@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterAll, describe, expect, it, vi } from "vitest";
 
-import { parseState, StateStore } from "../src/store.ts";
+import { JsonStateStore, parseState } from "../src/infrastructure/persistence/state-store.ts";
 
 const tmpDirs: string[] = [];
 
@@ -22,9 +22,9 @@ afterAll(() => {
   for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-describe("StateStore", () => {
+describe("JsonStateStore", () => {
   it("empieza vacio si no hay estado previo", async () => {
-    const store = new StateStore({ path: tmpStatePath(), logger: logger() });
+    const store = new JsonStateStore({ path: tmpStatePath(), logger: logger() });
 
     expect(await store.snapshot()).toEqual({ version: 1, statusChannelId: null, channels: {} });
     expect(await store.getMessageId("123")).toBeNull();
@@ -32,11 +32,11 @@ describe("StateStore", () => {
 
   it("persiste el mensaje del canal y sobrevive a un reinicio", async () => {
     const path = tmpStatePath();
-    const first = new StateStore({ path, logger: logger() });
+    const first = new JsonStateStore({ path, logger: logger() });
     await first.setMessageId("111111111111111111", "1392999999999999999", new Date(1000));
 
     // Otra instancia, como si el servicio se hubiera reiniciado.
-    const second = new StateStore({ path, logger: logger() });
+    const second = new JsonStateStore({ path, logger: logger() });
     expect(await second.getMessageId("111111111111111111")).toBe("1392999999999999999");
     expect(await second.getChannelState("111111111111111111")).toEqual({
       messageId: "1392999999999999999",
@@ -46,7 +46,7 @@ describe("StateStore", () => {
 
   it("escribe de forma atomica y no deja temporales", async () => {
     const path = tmpStatePath();
-    const store = new StateStore({ path, logger: logger() });
+    const store = new JsonStateStore({ path, logger: logger() });
     await store.setMessageId("1", "2", new Date(0));
 
     expect(readdirSync(join(path, ".."))).toEqual(["state.json"]);
@@ -59,32 +59,32 @@ describe("StateStore", () => {
 
   it("descarta un estado corrupto y lo avisa, sin romper", async () => {
     const path = tmpStatePath();
-    const store = new StateStore({ path, logger: logger() });
+    const store = new JsonStateStore({ path, logger: logger() });
     await store.setMessageId("1", "2");
     writeFileSync(path, "{ esto no es json");
 
     const log = logger();
-    const restarted = new StateStore({ path, logger: log });
+    const restarted = new JsonStateStore({ path, logger: log });
     expect(await restarted.snapshot()).toEqual({ version: 1, statusChannelId: null, channels: {} });
     expect(log.warn).toHaveBeenCalledOnce();
   });
 
   it("persiste el canal fijado con /set_channel y sigue leyendo estados antiguos", async () => {
     const path = tmpStatePath();
-    const store = new StateStore({ path, logger: logger() });
+    const store = new JsonStateStore({ path, logger: logger() });
     await store.setStatusChannelId("111111111111111111");
 
-    const restarted = new StateStore({ path, logger: logger() });
+    const restarted = new JsonStateStore({ path, logger: logger() });
     expect(await restarted.getStatusChannelId()).toBe("111111111111111111");
 
     // Un estado escrito antes de existir ese campo sigue valiendo.
     writeFileSync(path, JSON.stringify({ version: 1, channels: {} }));
-    const withoutField = new StateStore({ path, logger: logger() });
+    const withoutField = new JsonStateStore({ path, logger: logger() });
     expect(await withoutField.getStatusChannelId()).toBeNull();
   });
 
   it("permite olvidar el mensaje de un canal", async () => {
-    const store = new StateStore({ path: tmpStatePath(), logger: logger() });
+    const store = new JsonStateStore({ path: tmpStatePath(), logger: logger() });
     await store.setMessageId("1", "2");
     await store.setMessageId("1", null);
     expect(await store.getMessageId("1")).toBeNull();

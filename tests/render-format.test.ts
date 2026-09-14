@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { VERSION } from "../src/version.ts";
+import { VERSION } from "../src/infrastructure/config/version.ts";
 import {
   formatAgo,
   formatBytes,
@@ -12,7 +12,7 @@ import {
   formatUptime,
   NOT_AVAILABLE,
   progressBar,
-} from "../src/render/format.ts";
+} from "../src/domain/services/format.ts";
 
 describe("formatBytes", () => {
   it("usa la unidad mas legible", () => {

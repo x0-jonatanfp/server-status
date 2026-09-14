@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
 
-import { createLogger } from "../src/logger.ts";
+import { createLogger } from "../src/infrastructure/logging/logger.ts";
 
 const tmpDirs: string[] = [];
 

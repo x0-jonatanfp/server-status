@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import type { ExecFileFn } from "../src/collectors/exec.ts";
+import type { ExecFileFn } from "../src/infrastructure/exec.ts";
 import {
-  collectFail2ban,
+  createFail2banClient,
   InvalidIpError,
   parseCurrentlyBanned,
   parseJailList,
-  unbanIp,
-} from "../src/collectors/fail2ban.ts";
+} from "../src/infrastructure/fail2ban/client.ts";
 
 const JAILS = [
   "dovecot",
@@ -53,7 +52,11 @@ function jailOutput(name: string, banned: number): string {
   ].join("\n");
 }
 
-/** Exec de mentira que responde a `status`, `status <carcel>` y `set`. */
+/**
+ * Exec de mentira que responde a `status`, `status <carcel>` y `set`. El
+ * adaptador invoca `sudo -n <fail2ban-client> ...`, asi que los argumentos que
+ * llegan son `["-n", "/usr/bin/fail2ban-client", <comando>, ...]`.
+ */
 function fakeExec(
   overrides: { overview?: string; failJail?: string } = {},
 ): { exec: ExecFileFn; calls: string[][] } {
@@ -77,9 +80,9 @@ function fakeExec(
   return { exec, calls };
 }
 
-describe("collectFail2ban", () => {
+describe("estado de fail2ban", () => {
   it("parsea las 9 carceles y suma los baneos", async () => {
-    const status = await collectFail2ban({ exec: fakeExec().exec });
+    const status = await createFail2banClient({ exec: fakeExec().exec }).status();
 
     expect(status.available).toBe(true);
     expect(status.error).toBeNull();
@@ -90,11 +93,11 @@ describe("collectFail2ban", () => {
 
   it("consulta cada carcel con sudo -n, sin shell", async () => {
     const { exec, calls } = fakeExec();
-    await collectFail2ban({
+    await createFail2banClient({
       exec,
       sudoPath: "/usr/bin/sudo",
       clientPath: "/usr/bin/fail2ban-client",
-    });
+    }).status();
 
     expect(calls[0]).toEqual(["-n", "/usr/bin/fail2ban-client", "status"]);
     expect(calls[1]).toEqual(["-n", "/usr/bin/fail2ban-client", "status", "dovecot"]);
@@ -102,7 +105,7 @@ describe("collectFail2ban", () => {
   });
 
   it("una carcel que falla queda a null y no rompe el resto", async () => {
-    const status = await collectFail2ban({ exec: fakeExec({ failJail: "sshd" }).exec });
+    const status = await createFail2banClient({ exec: fakeExec({ failJail: "sshd" }).exec }).status();
 
     expect(status.available).toBe(true);
     expect(status.jails.find((jail) => jail.name === "sshd")?.banned).toBeNull();
@@ -115,42 +118,44 @@ describe("collectFail2ban", () => {
       throw new Error("sudo: no tty present");
     };
 
-    const status = await collectFail2ban({ exec });
+    const status = await createFail2banClient({ exec }).status();
 
     expect(status).toMatchObject({ available: false, totalBanned: 0, jails: [] });
     expect(status.error).toContain("no tty present");
   });
 
   it("no lanza si no hay carceles configuradas", async () => {
-    const status = await collectFail2ban({
+    const status = await createFail2banClient({
       exec: fakeExec({ overview: "Status\n|- Number of jail:\t0\n" }).exec,
-    });
+    }).status();
+
     expect(status).toMatchObject({ available: true, totalBanned: 0, jails: [] });
   });
 });
 
-describe("unbanIp", () => {
+describe("desbaneo", () => {
   it("no ejecuta nada si la IP no es valida", async () => {
     const calls: string[][] = [];
     const exec: ExecFileFn = async (_file, args) => {
       calls.push(args);
       return { stdout: OVERVIEW };
     };
+    const client = createFail2banClient({ exec });
 
     const invalidas = ["", "no-es-una-ip", "1.2.3.4; rm -rf /", "999.999.999.999", "$(whoami)"];
     for (const ip of invalidas) {
-      await expect(unbanIp(ip, { exec })).rejects.toBeInstanceOf(InvalidIpError);
+      await expect(client.unban(ip)).rejects.toBeInstanceOf(InvalidIpError);
     }
     expect(calls).toEqual([]);
   });
 
   it("desbanea la IP en todas las carceles", async () => {
     const { exec, calls } = fakeExec();
-    const result = await unbanIp("203.0.113.7", {
+    const result = await createFail2banClient({
       exec,
       sudoPath: "/usr/bin/sudo",
       clientPath: "/usr/bin/fail2ban-client",
-    });
+    }).unban("203.0.113.7");
 
     expect(result.ip).toBe("203.0.113.7");
     expect(result.jails.every((jail) => jail.ok)).toBe(true);
@@ -166,8 +171,7 @@ describe("unbanIp", () => {
   });
 
   it("acepta una IPv6", async () => {
-    const { exec } = fakeExec();
-    const result = await unbanIp("2001:db8::1", { exec });
+    const result = await createFail2banClient({ exec: fakeExec().exec }).unban("2001:db8::1");
     expect(result.jails.every((jail) => jail.ok)).toBe(true);
   });
 
@@ -179,7 +183,7 @@ describe("unbanIp", () => {
       return { stdout: "" };
     };
 
-    const result = await unbanIp("203.0.113.7", { exec });
+    const result = await createFail2banClient({ exec }).unban("203.0.113.7");
 
     expect(result.jails.find((jail) => jail.name === "sshd")).toMatchObject({
       ok: false,
@@ -204,7 +208,7 @@ describe("parsers", () => {
 
 describe.runIf(process.platform === "linux")("fail2ban en esta maquina", () => {
   it("ve las 9 carceles, incluidas las que el bot antiguo no conocia", async () => {
-    const status = await collectFail2ban();
+    const status = await createFail2banClient().status();
 
     expect(status.available).toBe(true);
     expect(status.jails).toHaveLength(9);

@@ -5,17 +5,21 @@ import { join } from "node:path";
 import { PermissionFlagsBits } from "discord.js";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
-import { InvalidIpError, type Fail2banUnbanResult } from "../src/collectors/fail2ban.ts";
-import type { StatusSnapshot } from "../src/collectors/index.ts";
-import { commandNames, commands, findCommand } from "../src/commands/index.ts";
+import { StatusLoop } from "../src/application/publish-status.ts";
+import type { Fail2banUnbanResult } from "../src/domain/entities/fail2ban-status.ts";
+import type { StatusSnapshot } from "../src/domain/entities/status-snapshot.ts";
+import type { StatusView } from "../src/domain/entities/status-view.ts";
+import type { StatusPublisherPort } from "../src/domain/ports/status-publisher.ts";
+import { parseAppConfig } from "../src/infrastructure/config/env.ts";
+import { parseInventory } from "../src/infrastructure/config/inventory.ts";
+import { commandNames, commands, findCommand } from "../src/infrastructure/discord/commands/index.ts";
 import type {
   CommandContext,
   CommandInteraction,
   CommandReply,
-} from "../src/commands/types.ts";
-import { parseAppConfig, parseInventory } from "../src/config.ts";
-import { Scheduler, type StatusPublisher } from "../src/scheduler.ts";
-import { StateStore } from "../src/store.ts";
+} from "../src/infrastructure/discord/commands/types.ts";
+import { InvalidIpError } from "../src/infrastructure/fail2ban/client.ts";
+import { JsonStateStore } from "../src/infrastructure/persistence/state-store.ts";
 
 const CHANNEL = "111111111111111111";
 const tmpDirs: string[] = [];
@@ -40,6 +44,14 @@ function snapshot(): StatusSnapshot {
     fail2ban: { available: true, totalBanned: 0, jails: [], error: null },
     bot: { pingMs: 42, uptimeSeconds: 3600 },
   };
+}
+
+function view(): StatusView {
+  return { blocks: ["🟢 SERVER STATUS"], level: "ok", accentColor: 0x00ff41 };
+}
+
+function logger() {
+  return { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
 }
 
 /** Interaccion de mentira: solo guarda lo que el comando responde. */
@@ -69,15 +81,15 @@ class FakeInteraction implements CommandInteraction {
   }
 }
 
-class FakePublisher implements StatusPublisher {
-  readonly messages = new Map<string, unknown>();
+class FakePublisher implements StatusPublisherPort {
+  readonly messages = new Map<string, StatusView>();
   runs = 0;
 
-  async publish(_channelId: string, view: unknown, existing: string | null) {
+  async publish(_channelId: string, view_: StatusView, existing: string | null) {
     this.runs += 1;
     const id = existing && this.messages.has(existing) ? existing : `mensaje-${this.messages.size + 1}`;
     const created = !this.messages.has(id);
-    this.messages.set(id, view);
+    this.messages.set(id, view_);
     return { messageId: id, created };
   }
 }
@@ -86,29 +98,26 @@ interface Harness {
   context: CommandContext;
   publisher: FakePublisher;
   unban: ReturnType<typeof vi.fn>;
-  store: StateStore;
+  store: JsonStateStore;
 }
 
 function harness(overrides: { requiredRoles?: string[] } = {}): Harness {
-  const config = {
-    ...parseAppConfig({
-      DISCORD_TOKEN: "token",
-      STATUS_CHANNEL_ID: CHANNEL,
-      REQUIRED_ROLES: overrides.requiredRoles ? `[${overrides.requiredRoles.join("],[")}]` : undefined,
-    }),
-    inventoryPath: "inventory.yaml",
-  };
+  const config = parseAppConfig({
+    DISCORD_TOKEN: "token",
+    STATUS_CHANNEL_ID: CHANNEL,
+    REQUIRED_ROLES: overrides.requiredRoles ? `[${overrides.requiredRoles.join("],[")}]` : undefined,
+  });
   const inventory = parseInventory({ services: [{ group: "Infra", units: ["nginx"] }] });
   const publisher = new FakePublisher();
-  const store = new StateStore({ path: tmpStatePath() });
-  const scheduler = new Scheduler({
+  const store = new JsonStateStore({ path: tmpStatePath(), logger: logger() });
+  const loop = new StatusLoop({
     updateIntervalSeconds: config.updateIntervalSeconds,
     channelId: CHANNEL,
     collect: async () => snapshot(),
-    render: () => ({ blocks: ["🟢 SERVER STATUS"], level: "ok", accentColor: 0x00ff41 }),
+    renderer: { render: () => view() },
     publisher,
     store,
-    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    logger: logger(),
   });
   const unban = vi.fn(
     async (ip: string): Promise<Fail2banUnbanResult> => ({
@@ -127,15 +136,15 @@ function harness(overrides: { requiredRoles?: string[] } = {}): Harness {
     context: {
       config,
       inventory,
-      scheduler,
+      scheduler: loop,
       store,
       collect: async () => snapshot(),
-      render: () => ({ blocks: ["🟢 SERVER STATUS"], level: "ok", accentColor: 0x00ff41 }),
+      render: () => view(),
       unban,
       gatewayPingMs: () => 42,
       version: "1.0.0",
       startedAt: new Date(2026, 8, 14, 12, 0, 0),
-      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      logger: logger(),
     },
   };
 }
@@ -243,16 +252,16 @@ describe("/update", () => {
 
   it("informa del error si el ciclo falla", async () => {
     const { context } = harness();
-    const failing = new Scheduler({
+    const failing = new StatusLoop({
       updateIntervalSeconds: 300,
       channelId: CHANNEL,
       collect: async () => {
         throw new Error("sin datos");
       },
-      render: () => ({ blocks: [], level: "ok", accentColor: 0 }),
+      renderer: { render: () => ({ blocks: [], level: "ok", accentColor: 0 }) },
       publisher: new FakePublisher(),
-      store: new StateStore({ path: tmpStatePath() }),
-      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+      store: new JsonStateStore({ path: tmpStatePath(), logger: logger() }),
+      logger: logger(),
     });
 
     const replies = await run("update", new FakeInteraction(), { ...context, scheduler: failing });

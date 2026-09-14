@@ -4,13 +4,10 @@ import { join } from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
 
-import {
-  ConfigError,
-  loadConfig,
-  parseInventory,
-  parseRequiredRoles,
-  type Inventory,
-} from "../src/config.ts";
+import type { Inventory } from "../src/domain/entities/inventory.ts";
+import { loadAppConfig, parseAppConfig, parseRequiredRoles } from "../src/infrastructure/config/env.ts";
+import { loadInventory, parseInventory } from "../src/infrastructure/config/inventory.ts";
+import { ConfigError } from "../src/infrastructure/config/validation.ts";
 
 const tmpDirs: string[] = [];
 
@@ -39,17 +36,18 @@ const MINIMAL_INVENTORY = [
 ].join("\n");
 
 /** Carga una configuracion de prueba aislada de `process.env`. */
-function load(files: { env?: string; inventory?: string | null }, env: Record<string, string> = {}) {
+function load(
+  files: { env?: string; inventory?: string | null },
+  env: Record<string, string> = {},
+): { app: ReturnType<typeof loadAppConfig>; inventory: Inventory } {
   const cwd = makeProject(files);
-  return loadConfig({ cwd, env });
+  const app = loadAppConfig({ cwd, env });
+  return { app, inventory: loadInventory(app.inventoryPath) };
 }
 
-describe("loadConfig", () => {
+describe("loadAppConfig + loadInventory", () => {
   it("carga un .env y un inventario validos", () => {
-    const { app, inventory } = load(
-      { env: MINIMAL_ENV, inventory: MINIMAL_INVENTORY },
-      {},
-    );
+    const { app, inventory } = load({ env: MINIMAL_ENV, inventory: MINIMAL_INVENTORY }, {});
 
     expect(app.discordToken).toBe("token-de-prueba");
     expect(app.statusChannelId).toBe("111111111111111111");
@@ -63,8 +61,9 @@ describe("loadConfig", () => {
   });
 
   it("aborta si falta DISCORD_TOKEN", () => {
-    expect(() => load({ env: "STATUS_CHANNEL_ID=111111111111111111", inventory: MINIMAL_INVENTORY }))
-      .toThrowError(/DISCORD_TOKEN/);
+    expect(() =>
+      load({ env: "STATUS_CHANNEL_ID=111111111111111111", inventory: MINIMAL_INVENTORY }),
+    ).toThrowError(/DISCORD_TOKEN/);
   });
 
   it("aborta si falta STATUS_CHANNEL_ID o no es un id", () => {
@@ -101,8 +100,15 @@ describe("loadConfig", () => {
 
   it("las variables del proceso ganan sobre el fichero .env", () => {
     const cwd = makeProject({ env: MINIMAL_ENV, inventory: MINIMAL_INVENTORY });
-    const { app } = loadConfig({ cwd, env: { UPDATE_INTERVAL: "120" } });
+    const app = loadAppConfig({ cwd, env: { UPDATE_INTERVAL: "120" } });
     expect(app.updateIntervalSeconds).toBe(120);
+  });
+
+  it("resuelve las rutas relativas contra el directorio de trabajo", () => {
+    const cwd = makeProject({ env: MINIMAL_ENV, inventory: MINIMAL_INVENTORY });
+    const app = loadAppConfig({ cwd, env: {} });
+    expect(app.inventoryPath).toBe(join(cwd, "inventory.yaml"));
+    expect(app.statePath).toBe(join(cwd, "data/state.json"));
   });
 
   it("aborta con un mensaje claro si no existe el inventario", () => {
@@ -126,10 +132,7 @@ describe("loadConfig", () => {
         "websites:\n  - url: example.com\nservices:\n  - group: A\n    units: [a]",
         /websites\[0\]\.url/,
       ],
-      [
-        "websites: nope\nservices:\n  - group: A\n    units: [a]",
-        /websites debe ser una lista/,
-      ],
+      ["websites: nope\nservices:\n  - group: A\n    units: [a]", /websites debe ser una lista/],
       ["services: []", /services no puede estar vacio/],
       ["services:\n  - group: A\n    units: []", /units no puede estar vacio/],
       [
@@ -201,6 +204,7 @@ describe("loadConfig", () => {
 
   it("expone el error como ConfigError", () => {
     expect(() => parseInventory({}, "inventory.yaml")).toThrowError(ConfigError);
+    expect(() => parseAppConfig({})).toThrowError(ConfigError);
   });
 });
 
@@ -208,7 +212,7 @@ describe("plantillas versionadas", () => {
   it(".env.example e inventory.yaml.example son coherentes con el parser", () => {
     // Si el ejemplo lleva una clave que el parser rechaza, este test falla: es
     // la garantia de que la plantilla documenta variables que funcionan.
-    const { app, inventory } = loadConfig({
+    const app = loadAppConfig({
       cwd: process.cwd(),
       envFile: ".env.example",
       env: {
@@ -217,6 +221,7 @@ describe("plantillas versionadas", () => {
         INVENTORY_PATH: "inventory.yaml.example",
       },
     });
+    const inventory = loadInventory(app.inventoryPath);
 
     expect(app.botDisplayName).toBe("server-status");
     expect(app.activity.type).toBe("Custom");
