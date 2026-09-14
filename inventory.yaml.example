@@ -44,6 +44,14 @@ temperatures:
     name: NVMe
     warn: 70
     crit: 79
+  # Los chips que no publican fichero `tempN_label` (tipico en placas base) se
+  # leen por indice: `index: 1` es temp1.
+  - source: hwmon
+    chip: it8792
+    index: 1
+    name: Placa
+    warn: 65
+    crit: 80
   - source: smartctl
     device: /dev/sda
     name: SSD
