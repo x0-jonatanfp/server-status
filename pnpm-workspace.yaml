@@ -1,0 +1,13 @@
+# Ajustes de pnpm para este proyecto.
+#
+# pnpm 11 ya no lee el campo "pnpm" de package.json: los ajustes viven aqui y
+# las claves cambiaron de nombre ("onlyBuiltDependencies" -> "allowBuilds", que
+# es un mapa paquete -> booleano).
+#
+# esbuild se deniega a proposito: su postinstall sustituye bin/esbuild (un shim
+# de JS) por el binario ELF, y el lanzador de pnpm ejecuta ese fichero con node,
+# con lo que el CLI deja de funcionar. Sin el postinstall el shim funciona bien.
+# Dejarlo explicito evita ademas el error ERR_PNPM_IGNORED_BUILDS en cada
+# instalacion.
+allowBuilds:
+  esbuild: false

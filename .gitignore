@@ -1,0 +1,23 @@
+# Dependencias
+node_modules/
+
+# Build
+dist/
+
+# Entorno y secretos
+.env
+.env.*
+!.env.example
+
+# Runtime
+logs/
+data/
+*.log
+
+# Spike (evidencia local, no forma parte del servicio)
+spike/node_modules/
+
+# Sistema
+.DS_Store
+__pycache__/
+coverage/
