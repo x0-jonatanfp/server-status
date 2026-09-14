@@ -214,8 +214,8 @@ describe("renderStatusView", () => {
     expect(view.blocks.join("\n")).not.toContain("📡 RED");
 
     const cpu = view.blocks.find((block) => block.includes("CPU"));
-    expect(cpu).toContain("🟩");
-    expect(cpu?.split("\n")[1]).toMatch(/🟩+⬜+/);
+    expect(cpu).toContain("🟪");
+    expect(cpu?.split("\n")[1]).toMatch(/🟪+⬜+/);
   });
 
   it("muestra N/A y no rompe cuando una fuente falla", () => {

@@ -75,7 +75,7 @@ export function formatInterval(seconds: number): string {
 export function progressBar(
   percent: number | null,
   blocks: number,
-  filled = "🟩",
+  filled = "🟪",
   empty = "⬜",
 ): string {
   if (percent === null || !Number.isFinite(percent)) return empty.repeat(blocks);

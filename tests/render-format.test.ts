@@ -60,13 +60,13 @@ describe("formatPercent, formatCelsius y formatMilliseconds", () => {
 describe("progressBar", () => {
   it("pinta tantos bloques como porcentaje", () => {
     expect(progressBar(0, 5)).toBe("⬜⬜⬜⬜⬜");
-    expect(progressBar(100, 5)).toBe("🟩🟩🟩🟩🟩");
-    expect(progressBar(12.4, 5)).toBe("🟩⬜⬜⬜⬜");
-    expect(progressBar(36, 10)).toBe("🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜");
+    expect(progressBar(100, 5)).toBe("🟪🟪🟪🟪🟪");
+    expect(progressBar(12.4, 5)).toBe("🟪⬜⬜⬜⬜");
+    expect(progressBar(36, 10)).toBe("🟪🟪🟪🟪⬜⬜⬜⬜⬜⬜");
   });
 
   it("no se sale del numero de bloques ni con datos raros", () => {
-    expect(progressBar(200, 5)).toBe("🟩🟩🟩🟩🟩");
+    expect(progressBar(200, 5)).toBe("🟪🟪🟪🟪🟪");
     expect(progressBar(-10, 5)).toBe("⬜⬜⬜⬜⬜");
     expect(progressBar(null, 5)).toBe("⬜⬜⬜⬜⬜");
   });
