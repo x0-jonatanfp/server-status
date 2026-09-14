@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
+import { AlertManager, type Alert } from "../src/alerts/alertManager.ts";
 import type { StatusSnapshot } from "../src/collectors/index.ts";
 import type { StatusView } from "../src/render/statusView.ts";
 import { Scheduler, type PublishResult, type StatusPublisher } from "../src/scheduler.ts";
@@ -84,6 +85,8 @@ function build(options: {
   publisher: FakePublisher;
   collect?: () => Promise<StatusSnapshot>;
   updateIntervalSeconds?: number;
+  alerts?: AlertManager;
+  notifyAlerts?: (alerts: Alert[]) => Promise<void>;
 }): { scheduler: Scheduler; store: StateStore } {
   const store = new StateStore({ path: options.storePath, logger: logger() });
   const scheduler = new Scheduler({
@@ -94,6 +97,8 @@ function build(options: {
     publisher: options.publisher,
     store,
     logger: logger(),
+    ...(options.alerts ? { alerts: options.alerts } : {}),
+    ...(options.notifyAlerts ? { notifyAlerts: options.notifyAlerts } : {}),
   });
   return { scheduler, store };
 }
@@ -217,6 +222,75 @@ describe("Scheduler", () => {
     await scheduler.stop();
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(collectCalls).toBe(afterInterval);
+  });
+
+  it("envia las alertas y respeta el cooldown entre ciclos", async () => {
+    let now = 1_000_000;
+    const sent: Alert[][] = [];
+    const alerts = new AlertManager({
+      cooldownMinutes: 30,
+      thresholds: {
+        cpu_percent: { warn: 70, crit: 90 },
+        memory_percent: { warn: 70, crit: 90 },
+        disk_percent: { warn: 80, crit: 95 },
+        ping_ms: { warn: 100, crit: 500 },
+      },
+      now: () => now,
+    });
+
+    const hot = snapshot();
+    hot.temperatures = [
+      { source: "hwmon", name: "CPU", celsius: 95, warn: 75, crit: 90, detail: "k10temp Tctl" },
+    ];
+
+    const { scheduler } = build({
+      storePath: tmpStatePath(),
+      publisher: new FakePublisher(),
+      collect: async () => hot,
+      alerts,
+      notifyAlerts: async (pending) => {
+        sent.push(pending);
+      },
+    });
+
+    await scheduler.runOnce("startup");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.[0]?.key).toBe("temperature:CPU");
+
+    // Siguiente ciclo dentro del cooldown: no se repite.
+    now += 5 * 60_000;
+    await scheduler.runOnce("interval");
+    expect(sent).toHaveLength(1);
+
+    // Pasado el cooldown vuelve a avisar.
+    now += 30 * 60_000;
+    await scheduler.runOnce("interval");
+    expect(sent).toHaveLength(2);
+  });
+
+  it("un fallo al enviar alertas no cambia el resultado del ciclo", async () => {
+    const alerts = new AlertManager({
+      cooldownMinutes: 30,
+      thresholds: {
+        cpu_percent: { warn: 1, crit: 2 },
+        memory_percent: { warn: 1, crit: 2 },
+        disk_percent: { warn: 1, crit: 2 },
+        ping_ms: { warn: 1, crit: 2 },
+      },
+    });
+
+    const { scheduler } = build({
+      storePath: tmpStatePath(),
+      publisher: new FakePublisher(),
+      alerts,
+      notifyAlerts: async () => {
+        throw new Error("Discord no acepta el mensaje");
+      },
+    });
+
+    const result = await scheduler.runOnce("startup");
+    expect(result.error).toBeNull();
+    expect(result.created).toBe(true);
   });
 
   it("guarda el resultado del ultimo ciclo", async () => {

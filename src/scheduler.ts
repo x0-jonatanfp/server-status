@@ -14,6 +14,7 @@
  */
 import type winston from "winston";
 
+import type { AlertManager, Alert } from "./alerts/alertManager.ts";
 import type { StatusSnapshot } from "./collectors/index.ts";
 import type { Level } from "./render/thresholds.ts";
 import type { StatusView } from "./render/statusView.ts";
@@ -50,6 +51,10 @@ export interface SchedulerOptions {
   publisher: StatusPublisher;
   store: StateStore;
   logger: Pick<winston.Logger, "info" | "warn" | "error" | "debug">;
+  /** Si se indica, cada ciclo evalua las alertas por umbral. */
+  alerts?: AlertManager;
+  /** Envio de las alertas que pasan el cooldown. Sin esto no se envia nada. */
+  notifyAlerts?: (alerts: Alert[]) => Promise<void>;
   /** Se llama al terminar cada ciclo (exito o error). */
   onRun?: (result: RunResult) => void;
 }
@@ -166,6 +171,8 @@ export class Scheduler {
           snapshot.collectedAt,
         );
       }
+
+      await this.dispatchAlerts(snapshot);
       this.options.logger.debug(
         `ciclo ${reason}: ${published.created ? "mensaje nuevo" : "mensaje editado"} ${published.messageId}`,
       );
@@ -178,5 +185,26 @@ export class Scheduler {
     this.lastRunResult = result;
     this.options.onRun?.(result);
     return result;
+  }
+
+  /**
+   * Evalua y envia alertas. Un fallo al enviarlas se registra pero no cambia el
+   * resultado del ciclo: el mensaje de estado ya se ha publicado.
+   */
+  private async dispatchAlerts(snapshot: StatusSnapshot): Promise<void> {
+    const { alerts, notifyAlerts } = this.options;
+    if (!alerts || !notifyAlerts) return;
+
+    const pending = alerts.evaluate(snapshot);
+    if (pending.length === 0) return;
+
+    try {
+      await notifyAlerts(pending);
+      this.options.logger.info(`enviadas ${pending.length} alerta(s): ${pending.map((alert) => alert.key).join(", ")}`);
+    } catch (error) {
+      this.options.logger.error(
+        `no se han podido enviar las alertas: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 }
