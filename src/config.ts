@@ -61,6 +61,8 @@ export interface ActivityConfig {
 export interface AppConfig {
   discordToken: string;
   botDisplayName: string;
+  /** Dominio o nombre publico del host, si se quiere mostrar junto al SO. */
+  hostLabel: string | null;
   activity: ActivityConfig;
   statusChannelId: string;
   alertChannelId: string | null;
@@ -560,6 +562,7 @@ export function parseAppConfig(env: Record<string, string | undefined>): AppConf
   return {
     discordToken: requiredEnv(env, "DISCORD_TOKEN"),
     botDisplayName: optionalEnv(env, "BOT_DISPLAY_NAME") ?? "server-status",
+    hostLabel: optionalEnv(env, "HOST_LABEL"),
     activity: {
       type: parseActivityType(readEnv(env, "BOT_ACTIVITY_TYPE")),
       name: optionalEnv(env, "BOT_ACTIVITY_NAME") ?? "server status",
