@@ -5,6 +5,7 @@ import type {
   DisplaySettings,
   MetricKey,
   MetricThreshold,
+  ResourceSettings,
 } from "../src/domain/entities/inventory.ts";
 import type { ServiceStatus } from "../src/domain/entities/service-status.ts";
 import type { StatusSnapshot } from "../src/domain/entities/status-snapshot.ts";
@@ -13,6 +14,7 @@ import {
   countComponents,
   createStatusRenderer,
   MAX_LINE_WIDTH,
+  MAX_RESOURCE_ROW_WIDTH,
   renderStatusView,
   toComponents,
   type StatusRendererOptions,
@@ -34,11 +36,24 @@ function endsWithMark(line: string): boolean {
   return STATE_MARKS.some((mark) => line.endsWith(mark));
 }
 
+/** Cuadrados de la barra: llenos o vacios. */
+function hasBar(line: string): boolean {
+  return line.includes("🟪") || line.includes("⬜");
+}
+
+/**
+ * La barra de una fila. El flag `u` es imprescindible: sin el, la clase de
+ * caracteres casaria medio emoji (un suplente suelto) en vez del cuadrado.
+ */
+function barOf(line: string): string {
+  return /[🟪⬜]+/u.exec(line)?.[0] ?? "";
+}
+
 const DISPLAY: DisplaySettings = {
   showGroups: true,
   showFail2banBreakdown: true,
   showPing: true,
-  progressBarBlocks: 5,
+  progressBarBlocks: 10,
   colors: { ok: "#00FF41", warning: "#FFAA00", critical: "#FF0040" },
 };
 
@@ -49,11 +64,28 @@ const THRESHOLDS: Record<MetricKey, MetricThreshold> = {
   ping_ms: { warn: 100, crit: 500 },
 };
 
+/** Las seis filas del inventario real: CPU, GPU, RAM y los tres volumenes. */
+const RESOURCES: ResourceSettings = {
+  cpu: { label: "CPU", icon: "🧠", temperature: "CPU" },
+  gpu: {
+    label: "GPU",
+    icon: "🎮",
+    temperature: "GPU",
+    busyPercentPath: "/sys/class/drm/card*/device/gpu_busy_percent",
+  },
+  memory: { label: "RAM", icon: "💾", temperature: null },
+  disks: [
+    { label: "NVME", icon: "💽", mount: "/", temperature: "NVMe" },
+    { label: "SSD", icon: "📀", mount: "/mnt/ssd", temperature: "SSD" },
+    { label: "HDD", icon: "🗄️", mount: "/mnt/storage", temperature: "HDD" },
+  ],
+};
+
 function options(overrides: Partial<StatusRendererOptions> = {}): StatusRendererOptions {
   return {
     display: DISPLAY,
+    resources: RESOURCES,
     thresholds: THRESHOLDS,
-    hostLabel: "example.com",
     updateIntervalSeconds: 300,
     version: "1.0.0",
     ...overrides,
@@ -64,24 +96,28 @@ function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
   return {
     collectedAt: new Date(2026, 8, 14, 14, 32, 10),
     system: {
-      cpuPercent: 12.4,
-      memory: { percent: 18.4, usedBytes: 5.8 * 1024 ** 3, totalBytes: 31.3 * 1024 ** 3 },
-      disk: {
-        mount: "/",
-        percent: 36,
-        usedBytes: 164.5 * 1024 ** 3,
-        totalBytes: 456.9 * 1024 ** 3,
-      },
-      uptimeSeconds: 4 * 86_400 + 12 * 3600 + 7 * 60,
-      os: { hostname: "void", distro: "Ubuntu", release: "24.04", kernel: "7.0.0" },
+      cpuPercent: 23.1,
+      gpuPercent: 0,
+      memory: { percent: 22.6, usedBytes: 7.1 * 1024 ** 3, totalBytes: 31.3 * 1024 ** 3 },
+      disks: [
+        { mount: "/", percent: 37, usedBytes: 169.2 * 1024 ** 3, totalBytes: 456.9 * 1024 ** 3 },
+        { mount: "/mnt/ssd", percent: 67.2, usedBytes: 78 * 1024 ** 3, totalBytes: 116 * 1024 ** 3 },
+        {
+          mount: "/mnt/storage",
+          percent: 13.5,
+          usedBytes: 124 * 1024 ** 3,
+          totalBytes: 916 * 1024 ** 3,
+        },
+      ],
+      uptimeSeconds: 2 * 86_400 + 3600 + 48 * 60,
+      os: { hostname: "void", distro: "Ubuntu", release: "24.04", kernel: "7.0.0-31-generic" },
     },
     temperatures: [
-      { source: "hwmon", name: "CPU", celsius: 53.6, warn: 75, crit: 90, detail: "k10temp Tctl" },
-      { source: "hwmon", name: "GPU", celsius: 44, warn: 80, crit: 91, detail: "amdgpu edge" },
-      { source: "hwmon", name: "NVMe", celsius: 40.9, warn: 70, crit: 79, detail: "nvme Composite" },
-      { source: "hwmon", name: "Placa", celsius: 35, warn: 60, crit: 80, detail: "it8792 temp1" },
-      { source: "smartctl", name: "SSD", celsius: 38, warn: 60, crit: 70, detail: "/dev/sda" },
-      { source: "smartctl", name: "HDD", celsius: 34, warn: 55, crit: 65, detail: "/dev/sdb" },
+      { source: "hwmon", name: "CPU", celsius: 45.1, warn: 75, crit: 90, detail: "k10temp Tctl" },
+      { source: "hwmon", name: "GPU", celsius: 42, warn: 80, crit: 91, detail: "amdgpu edge" },
+      { source: "hwmon", name: "NVMe", celsius: 36.9, warn: 70, crit: 79, detail: "nvme Composite" },
+      { source: "smartctl", name: "SSD", celsius: 34, warn: 60, crit: 70, detail: "/dev/sda" },
+      { source: "smartctl", name: "HDD", celsius: 30, warn: 50, crit: 60, detail: "/dev/sdb" },
     ],
     services: [
       {
@@ -108,11 +144,11 @@ function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
     ],
     fail2ban: {
       available: true,
-      totalBanned: 37,
+      totalBanned: 69,
       jails: [
         { name: "dovecot", banned: 0 },
-        { name: "recidive", banned: 31 },
-        { name: "sshd", banned: 6 },
+        { name: "postfix", banned: 4 },
+        { name: "recidive", banned: 65 },
       ],
       error: null,
     },
@@ -132,21 +168,38 @@ function lines(block: string): string[] {
   return block.split("\n");
 }
 
-/** Filas de la tabla de recursos, sin las cabeceras ni las vallas del codigo. */
+/** Las seis filas de recursos, sin la cabecera. */
 function resourceRows(view: { blocks: string[] }): string[] {
-  const all = lines(section(view, "⚙️"));
-  expect(all[1]).toBe("```");
-  expect(all.at(-1)).toBe("```");
-  return all.slice(2, -1);
+  return lines(section(view, "⚙️")).slice(1);
 }
 
 function serviceLines(view: { blocks: string[] }): string[] {
   return lines(section(view, "🧩")).slice(1);
 }
 
+function fail2banLines(view: { blocks: string[] }): string[] {
+  return lines(section(view, "🔒"));
+}
+
+function footerLines(view: { blocks: string[] }): string[] {
+  const block = view.blocks.at(-1);
+  if (block === undefined) throw new Error("no hay pie");
+  return lines(block);
+}
+
 describe("renderStatusView", () => {
   it("compone el mensaje completo", () => {
     expect(renderStatusView(snapshot(), options()).blocks).toMatchSnapshot();
+  });
+
+  it("empieza en RECURSOS: no hay bloque de titulo ni seccion de temperaturas", () => {
+    const view = renderStatusView(snapshot(), options());
+
+    expect(view.blocks[0]?.startsWith("⚙️ RECURSOS")).toBe(true);
+    const text = view.blocks.join("\n");
+    expect(text).not.toContain("SERVER STATUS");
+    expect(text).not.toContain("🌡️");
+    expect(text).not.toContain("Placa");
   });
 
   it("el color de acento sigue el estado global", () => {
@@ -175,94 +228,102 @@ describe("renderStatusView", () => {
     expect(critical.accentColor).toBe(0xff0040);
   });
 
-  it("muestra la version base de la distribucion", () => {
-    const view = renderStatusView(
-      snapshot({
-        system: {
-          ...snapshot().system,
-          os: { hostname: "void", distro: "Ubuntu", release: "24.04.5 LTS", kernel: "7.0.0" },
-        },
-      }),
-      options(),
-    );
+  it("pinta las seis filas con su emoji, su etiqueta y su valor", () => {
+    const rows = resourceRows(renderStatusView(snapshot(), options()));
 
-    expect(view.blocks[0]).toContain("example.com · Ubuntu 24.04 · kernel 7.0.0");
+    expect(rows).toHaveLength(6);
+    expect(rows[0]).toContain(`🧠${NBSP}CPU`);
+    expect(rows[1]).toContain(`🎮${NBSP}GPU`);
+    expect(rows[2]).toContain(`💾${NBSP}RAM`);
+    expect(rows[3]).toContain(`💽${NBSP}NVME`);
+    expect(rows[4]).toContain(`📀${NBSP}SSD`);
+    expect(rows[5]).toContain(`🗄️${NBSP}HDD`);
+
+    // CPU y GPU llevan su `%` y su temperatura; RAM su uso y los discos sus GB.
+    expect(rows[0]).toContain("23.1%");
+    expect(rows[0]).toContain("45.1 °C");
+    expect(rows[1]).toContain("0.0%");
+    expect(rows[1]).toContain("42.0 °C");
+    expect(rows[2]).toContain("22.6%");
+    expect(rows[2]).toContain("7.1 GB / 31.3 GB");
+    expect(rows[3]).toContain("169.2 GB / 456.9 GB");
+    expect(rows[3]).toContain("36.9 °C");
+    expect(rows[4]).toContain("78.0 GB / 116.0 GB");
+    expect(rows[5]).toContain("124.0 GB / 916.0 GB");
+
+    // Las filas de disco no ensenan un porcentaje de uso.
+    for (const row of rows.slice(3)) {
+      expect(row).not.toContain("%");
+    }
   });
 
-  it("la tabla de recursos va en un bloque de codigo y alinea las columnas", () => {
-    const view = renderStatusView(
-      snapshot({
-        system: {
-          ...snapshot().system,
-          // 1, 2 y 3 digitos (mas el caso "100.0%") en el mismo mensaje.
-          cpuPercent: 7.2,
-          memory: { percent: 18.4, usedBytes: 5.8 * 1024 ** 3, totalBytes: 31.3 * 1024 ** 3 },
-          disk: {
-            mount: "/",
-            percent: 100,
-            usedBytes: 456.9 * 1024 ** 3,
-            totalBytes: 456.9 * 1024 ** 3,
-          },
-        },
-      }),
-      options(),
-    );
+  it("la GPU sale sin barra ni porcentaje si no se puede leer su uso", () => {
+    const view = renderStatusView(snapshot({ system: { ...snapshot().system, gpuPercent: null } }), options());
+    const gpu = resourceRows(view)[1] ?? "";
 
-    const rows = resourceRows(view);
-    expect(rows).toHaveLength(3);
-    expect(section(view, "⚙️")).toContain("7.2%");
-    expect(section(view, "⚙️")).toContain("100.0%");
-    // Nada de emoji dentro de la tabla: romperian el monoespaciado.
-    expect(section(view, "⚙️")).not.toMatch(/🧠|💾|💽|🟪|⬜/);
-
-    // La barra empieza en la misma columna en las tres filas...
-    expect(new Set(rows.map((row) => row.search(/[█░]/))).size).toBe(1);
-    // ...y el porcentaje termina en la misma columna tenga uno, dos o tres
-    // digitos (los numeros van alineados a la derecha, como en una tabla).
-    expect(
-      new Set(
-        rows.map((row) => {
-          const match = /\d+\.\d%/.exec(row);
-          return (match?.index ?? -1) + (match?.[0].length ?? 0);
-        }),
-      ).size,
-    ).toBe(1);
-    // El detalle ("5.8 GB / 31.3 GB") tambien arranca en la misma columna en
-    // las filas que lo tienen (la CPU no lo lleva).
-    const detailStarts = rows.map(
-      (row) => /[\d.]+ (?:GB|TB|MB|KB|B) \/ [\d.]+ (?:GB|TB|MB|KB|B)/.exec(row)?.index ?? -1,
-    );
-    const withDetail = detailStarts.filter((column) => column >= 0);
-    expect(withDetail).toHaveLength(2);
-    expect(new Set(withDetail).size).toBe(1);
+    expect(hasBar(gpu)).toBe(false);
+    expect(gpu).not.toContain("%");
+    // Queda su temperatura, que si se ha podido leer.
+    expect(gpu).toContain("42.0 °C");
   });
 
-  it("la tabla sigue alineada cuando falta el dato (N/A)", () => {
+  it("un disco que no esta montado sale sin datos, no con los de otro volumen", () => {
     const view = renderStatusView(
       snapshot({
-        // Una fila sin dato entre dos que si lo tienen: la columna no se mueve.
         system: {
           ...snapshot().system,
-          cpuPercent: null,
-          memory: { percent: 18.4, usedBytes: 5.8 * 1024 ** 3, totalBytes: 31.3 * 1024 ** 3 },
-          disk: null,
+          // Falta /mnt/ssd: su fila no puede coger los GB de otro mount.
+          disks: snapshot().system.disks.filter((disk) => disk.mount !== "/mnt/ssd"),
         },
       }),
       options(),
     );
+    const ssd = resourceRows(view)[4] ?? "";
 
-    const rows = resourceRows(view);
-    expect(section(view, "⚙️")).toContain("N/A");
-    // La barra vacia ocupa el mismo sitio que con un valor real.
-    expect(new Set(rows.map((row) => row.search(/[█░]/))).size).toBe(1);
-    // El porcentaje termina en la misma columna tenga dato o no: `N/A` se
-    // rellena por la izquierda hasta las 6 columnas de "100.0%".
-    const ends = rows.map((row) => {
-      const match = /(N\/A|\d+\.\d%)/.exec(row);
-      return (match?.index ?? -1) + (match?.[0].length ?? 0);
-    });
-    expect(new Set(ends).size).toBe(1);
-    expect(ends[0]).toBeGreaterThan(0);
+    expect(ssd).toContain(`📀${NBSP}SSD`);
+    expect(ssd).toContain("N/A");
+    expect(hasBar(ssd)).toBe(false);
+    expect(ssd).not.toContain("%");
+  });
+
+  it("la barra pinta al menos un bloque con consumo, y ninguno con 0 %", () => {
+    const view = renderStatusView(
+      snapshot({
+        system: {
+          ...snapshot().system,
+          cpuPercent: 2,
+          memory: { percent: 0, usedBytes: 0, totalBytes: 1024 ** 4 },
+          disks: [{ mount: "/", percent: 100, usedBytes: 1000, totalBytes: 1000 }],
+        },
+      }),
+      options({ resources: { ...RESOURCES, disks: [RESOURCES.disks[0]!] } }),
+    );
+
+    const [cpu, , ram, nvme] = resourceRows(view);
+    expect(barOf(cpu ?? "")).toBe("🟪" + "⬜".repeat(9));
+    expect(barOf(nvme ?? "")).toBe("🟪".repeat(10));
+    // 0 % se queda entero en blanco.
+    expect(barOf(ram ?? "")).toBe("⬜".repeat(10));
+  });
+
+  it("marca la fila con la peor de sus dos lecturas", () => {
+    const view = renderStatusView(
+      snapshot({
+        temperatures: [
+          { source: "hwmon", name: "CPU", celsius: 95, warn: 75, crit: 90, detail: "k10temp Tctl" },
+          { source: "hwmon", name: "GPU", celsius: 42, warn: 80, crit: 91, detail: "amdgpu edge" },
+        ],
+        system: { ...snapshot().system, gpuPercent: null },
+      }),
+      options(),
+    );
+
+    const [cpu, gpu] = resourceRows(view);
+    expect(cpu).toContain("95.0 °C");
+    expect(cpu).toContain("❌");
+    // Sin dato de uso pero con temperatura normal: la fila no se marca.
+    for (const mark of ["❌", "⚠️", "❔"]) expect(gpu).not.toContain(mark);
+    expect(view.level).toBe("critical");
   });
 
   it("marca un servicio caido y cuenta los activos", () => {
@@ -353,29 +414,6 @@ describe("renderStatusView", () => {
     }
   });
 
-  it("las temperaturas se empaquetan sin pasar del ancho", () => {
-    const view = renderStatusView(
-      snapshot({
-        temperatures: Array.from({ length: 8 }, (_, index) => ({
-          source: "hwmon" as const,
-          name: `Sensor-${index}`,
-          celsius: 40 + index,
-          warn: 70,
-          crit: 90,
-          detail: "hwmon",
-        })),
-      }),
-      options(),
-    );
-
-    const rows = lines(section(view, "🌡️")).slice(1);
-    expect(rows.length).toBeGreaterThan(1);
-    for (const row of rows) {
-      expect(displayWidth(row)).toBeLessThanOrEqual(MAX_LINE_WIDTH);
-      expect(row.endsWith(" · ")).toBe(false);
-    }
-  });
-
   it("una web caida muestra el codigo o el motivo", () => {
     const view = renderStatusView(
       snapshot({
@@ -397,13 +435,63 @@ describe("renderStatusView", () => {
     expect(view.level).toBe("warning");
   });
 
+  it("RED lleva la latencia y FAIL2BAN su total y una carcel por linea", () => {
+    const view = renderStatusView(snapshot(), options());
+
+    expect(section(view, "📡")).toBe("📡 RED\nBot 42 ms");
+    expect(fail2banLines(view)).toEqual([
+      "🔒 FAIL2BAN · 69 IPs baneadas",
+      "postfix 4",
+      "recidive 65",
+    ]);
+  });
+
+  it("sin desglose de fail2ban queda solo el total, y sin datos lo dice", () => {
+    const noBreakdown = renderStatusView(
+      snapshot(),
+      options({ display: { ...DISPLAY, showFail2banBreakdown: false } }),
+    );
+    expect(fail2banLines(noBreakdown)).toEqual(["🔒 FAIL2BAN · 69 IPs baneadas"]);
+
+    const noJails = renderStatusView(
+      snapshot({
+        fail2ban: { available: true, totalBanned: 0, jails: [{ name: "sshd", banned: 0 }], error: null },
+      }),
+      options(),
+    );
+    expect(fail2banLines(noJails)).toEqual(["🔒 FAIL2BAN · 0 IPs baneadas"]);
+
+    const unavailable = renderStatusView(
+      snapshot({ fail2ban: { available: false, totalBanned: 0, jails: [], error: "sin permisos" } }),
+      options(),
+    );
+    expect(fail2banLines(unavailable)).toEqual(["🔒 FAIL2BAN · sin datos"]);
+  });
+
+  it("el pie lleva dos lineas: el sistema y la actualizacion", () => {
+    const footer = footerLines(renderStatusView(snapshot(), options()));
+
+    expect(footer).toEqual([
+      "Ubuntu 24.04 · 7.0.0-31-generic · 2d 01h 48m",
+      "Actualizado cada 5 min · última 14:32 · v1.0.0",
+    ]);
+  });
+
+  it("el uptime del pie va con horas y minutos a dos digitos", () => {
+    const view = renderStatusView(
+      snapshot({ system: { ...snapshot().system, uptimeSeconds: 3600 + 60 } }),
+      options(),
+    );
+    expect(footerLines(view)[0]).toContain("01h 01m");
+    expect(footerLines(view)[0]).not.toContain("d ");
+  });
+
   it("respetando el bloque display del inventario", () => {
     const display: DisplaySettings = {
       ...DISPLAY,
       showGroups: false,
       showFail2banBreakdown: false,
       showPing: false,
-      progressBarBlocks: 10,
     };
     const view = renderStatusView(snapshot(), options({ display }));
 
@@ -411,15 +499,15 @@ describe("renderStatusView", () => {
     expect(serviceLines(view).some((row) => row.startsWith("Infra"))).toBe(false);
     expect(serviceLines(view).some((row) => row.startsWith("Bots"))).toBe(false);
 
-    const network = view.blocks.find((block) => block.includes("Fail2ban"));
-    expect(network).toBe("🔒 Fail2ban: 37 IPs baneadas");
-    expect(view.blocks.join("\n")).not.toContain("📡 RED");
+    const text = view.blocks.join("\n");
+    expect(text).not.toContain("📡 RED");
+    expect(text).toContain("🔒 FAIL2BAN · 69 IPs baneadas");
+  });
 
-    // La barra tiene los 10 bloques del inventario y es de caracteres fijos.
-    const cpu = resourceRows(view)[0];
-    expect(cpu).toContain("█");
-    expect(cpu).toContain("░");
-    expect(cpu?.match(/[█░]+/)?.[0]).toHaveLength(10);
+  it("una barra con otro numero de bloques sale del inventario", () => {
+    const view = renderStatusView(snapshot(), options({ display: { ...DISPLAY, progressBarBlocks: 5 } }));
+    // 23.1 % de 5 bloques: 1 lleno (y la barra ocupa 5, no 10).
+    expect(barOf(resourceRows(view)[0] ?? "")).toBe("🟪⬜⬜⬜⬜");
   });
 
   it("muestra N/A y no rompe cuando una fuente falla", () => {
@@ -427,13 +515,14 @@ describe("renderStatusView", () => {
       snapshot({
         system: {
           cpuPercent: null,
+          gpuPercent: null,
           memory: null,
-          disk: null,
+          disks: [],
           uptimeSeconds: null,
           os: null,
         },
         temperatures: [
-          { source: "smartctl", name: "SSD", celsius: null, warn: 60, crit: 70, detail: "/dev/sda" },
+          { source: "smartctl", name: "HDD", celsius: null, warn: 50, crit: 60, detail: "/dev/sdb" },
         ],
         websites: [
           { label: "example.com", url: "https://example.com", up: true, statusCode: 200, latencyMs: null, error: null },
@@ -446,19 +535,38 @@ describe("renderStatusView", () => {
 
     const text = view.blocks.join("\n");
     expect(text).toContain("N/A");
-    expect(text).toContain(`SSD${NBSP}❔${NBSP}N/A`);
-    expect(text).toContain("🔒 Fail2ban: sin datos");
+    expect(text).toContain("🔒 FAIL2BAN · sin datos");
     expect(text).toContain("✅ example.com N/A");
+
+    const rows = resourceRows(view);
+    // Ni CPU ni RAM ni los discos: todas las filas salen sin barra.
+    for (const row of rows) expect(hasBar(row)).toBe(false);
+    expect(rows[0]).toContain("N/A");
+    // El HDD no se ha podido leer: su temperatura tambien es N/A.
+    expect(rows[5]).toContain(`❔`);
+    // El pie no se rompe sin sistema operativo.
+    expect(footerLines(view)[0]).toContain("N/A");
   });
 
-  it("ninguna linea se pasa del ancho que promete el render", () => {
+  it("ninguna linea de las listas se pasa del ancho que promete el render", () => {
     for (const showGroups of [true, false]) {
       const view = renderStatusView(snapshot(), options({ display: { ...DISPLAY, showGroups } }));
       for (const block of view.blocks) {
         for (const line of lines(block)) {
+          // La tabla de recursos no se empaqueta: tiene su propio presupuesto.
+          if (block.startsWith("⚙️")) continue;
           expect(displayWidth(line)).toBeLessThanOrEqual(MAX_LINE_WIDTH);
         }
       }
+    }
+  });
+
+  it("cada fila de recursos es una sola linea y cabe en su presupuesto", () => {
+    const view = renderStatusView(snapshot(), options());
+
+    for (const row of resourceRows(view)) {
+      expect(displayWidth(row)).toBeLessThanOrEqual(MAX_RESOURCE_ROW_WIDTH);
+      expect(row.trim()).not.toBe("");
     }
   });
 

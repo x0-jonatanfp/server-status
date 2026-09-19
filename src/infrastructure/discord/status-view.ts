@@ -7,12 +7,16 @@
  *
  * Components V2 (flag `IsComponentsV2`) en lugar de un embed clasico: un embed
  * tiene 25 campos y 6000 caracteres para todo el mensaje, y aqui hay 23
- * servicios, 5 webs y 6 temperaturas; el mensaje con el flag admite 40
+ * servicios, 5 webs y 6 filas de recursos; el mensaje con el flag admite 40
  * componentes y no hace falta recortar nada. El flag se pone desde el primer
  * envio porque no se puede quitar despues.
  *
+ * El mensaje empieza en `RECURSOS` y el estado global lo dice el color de acento
+ * del contenedor, no un titulo. El bloque del pie lleva el sistema operativo y
+ * la hora de la ultima actualizacion.
+ *
  * Lo que se muestra y lo que no (grupos, desglose de fail2ban, ping, numero de
- * bloques de la barra y colores) sale del bloque `display` del inventario.
+ * bloques de la barra, colores y las filas de recursos) sale del inventario.
  */
 import {
   ContainerBuilder,
@@ -21,19 +25,27 @@ import {
   TextDisplayBuilder,
 } from "discord.js";
 
-import type { DisplaySettings, MetricKey, MetricThreshold } from "../../domain/entities/inventory.ts";
+import type {
+  DisplaySettings,
+  MetricKey,
+  MetricThreshold,
+  ResourceRowSettings,
+  ResourceSettings,
+} from "../../domain/entities/inventory.ts";
 import type { ServiceStatus } from "../../domain/entities/service-status.ts";
 import type { StatusSnapshot } from "../../domain/entities/status-snapshot.ts";
 import type { StatusView } from "../../domain/entities/status-view.ts";
+import type { DiskUsage } from "../../domain/entities/system-metrics.ts";
+import type { TemperatureReading } from "../../domain/entities/temperature-reading.ts";
 import type { StatusRendererPort } from "../../domain/ports/status-renderer.ts";
 import {
   displayWidth,
   formatBytes,
   formatCelsius,
-  formatClock,
   formatInterval,
   formatMilliseconds,
   formatPercent,
+  formatShortClock,
   formatUptime,
   NOT_AVAILABLE,
   packEntries,
@@ -41,7 +53,6 @@ import {
 } from "../../domain/services/format.ts";
 import {
   accentColor,
-  levelEmoji,
   levelFromServiceState,
   levelFromTemperature,
   levelFromThreshold,
@@ -62,16 +73,24 @@ export const MAX_COMPONENTS = 40;
  * Ancho maximo (en columnas) de las lineas que empaqueta el bot.
  *
  * Discord parte las lineas donde quiere, asi que las listas (servicios,
- * temperaturas) y la tabla de recursos se cortan antes: cada entrada queda
- * entera en una linea. Es un presupuesto de anchura, no un limite de Discord.
+ * temperaturas) se cortan antes: cada entrada queda entera en una linea. Es un
+ * presupuesto de anchura, no un limite de Discord.
  */
 export const MAX_LINE_WIDTH = 60;
 
+/**
+ * Ancho maximo de una fila de recursos. Es mas generoso que `MAX_LINE_WIDTH`
+ * porque la barra (10 cuadrados = 20 columnas) y el detalle de un disco no se
+ * pueden partir sin romper la fila, que es lo que se lee de un vistazo.
+ */
+export const MAX_RESOURCE_ROW_WIDTH = 72;
+
 export interface StatusRendererOptions {
   display: DisplaySettings;
+  /** Filas de recursos: etiquetas, emojis y sensores enlazados. */
+  resources: ResourceSettings;
   /** Umbrales de recursos y de latencia (`alerts.thresholds` del inventario). */
   thresholds: Record<MetricKey, MetricThreshold>;
-  hostLabel?: string | null;
   updateIntervalSeconds: number;
   version: string;
 }
@@ -91,29 +110,30 @@ export function renderStatusView(
   options: StatusRendererOptions,
 ): StatusView {
   const resources = renderResources(snapshot, options);
-  const temperatures = renderTemperatures(snapshot);
   const services = renderServices(snapshot, options.display);
   const websites = renderWebsites(snapshot);
-  const network = renderNetwork(snapshot, options);
+  const network = renderNetwork(snapshot, options.display);
+  const fail2ban = renderFail2ban(snapshot, options.display);
   const footer = renderFooter(snapshot, options);
+
+  // El nivel global sigue teniendo en cuenta todas las temperaturas, esten o no
+  // enlazadas con una fila de recursos: el color de acento no puede perderse una
+  // lectura fuera de rango.
+  const temperatures = snapshot.temperatures.map((reading) =>
+    levelFromTemperature(reading.celsius, reading.warn, reading.crit),
+  );
 
   const level = worstLevel([
     ...resources.levels,
-    ...temperatures.levels,
+    ...temperatures,
     ...services.levels,
     ...websites.levels,
     levelFromThreshold(snapshot.bot.pingMs, options.thresholds.ping_ms),
   ]);
 
-  const blocks = [
-    renderHeader(snapshot, options, level),
-    resources.text,
-    temperatures.text,
-    services.text,
-    websites.text,
-    network,
-    footer,
-  ].filter((block): block is string => block !== null);
+  const blocks = [resources.text, services.text, websites.text, network, fail2ban, footer].filter(
+    (block): block is string => block !== null && block !== "",
+  );
 
   return {
     blocks: blocks.map(truncate),
@@ -128,133 +148,215 @@ function truncate(block: string): string {
     : `${block.slice(0, MAX_TEXT_DISPLAY_CHARS - 1)}…`;
 }
 
-function renderHeader(
-  snapshot: StatusSnapshot,
-  options: StatusRendererOptions,
-  level: Level,
-): string {
-  const { os, uptimeSeconds } = snapshot.system;
-  const title = [
-    `${levelEmoji(level)} SERVER STATUS`,
-    os?.hostname ?? NOT_AVAILABLE,
-    formatClock(snapshot.collectedAt),
-  ].join(" · ");
-  const subtitle = [
-    options.hostLabel,
-    formatDistribution(os) ?? NOT_AVAILABLE,
-    `kernel ${os?.kernel ?? NOT_AVAILABLE}`,
-    `up ${formatUptime(uptimeSeconds)}`,
-  ]
-    .filter((part): part is string => Boolean(part))
-    .join(" · ");
-
-  return `${title}\n${subtitle}`;
-}
-
 interface Section {
   text: string | null;
   levels: Level[];
 }
 
-/**
- * `Ubuntu 24.04`: `osInfo().distro` solo trae el nombre y `release` trae cosas
- * como `24.04.5 LTS`, asi que se muestra solo la version base.
- */
-function formatDistribution(os: StatusSnapshot["system"]["os"]): string | null {
-  if (os === null) return null;
-  const version = /^\d+(\.\d+)?/.exec(os.release)?.[0] ?? os.release;
-  return [os.distro, version].filter((part) => part !== "").join(" ");
-}
-
 interface ResourceRow {
+  icon: string;
+  /** Etiqueta ya en mayusculas y sin rellenar; el relleno lo pone el render. */
   label: string;
+  /** Uso medido; `null` = no se ha podido leer y la fila sale sin barra. */
   percent: number | null;
-  /** Detalle a la derecha de la barra (vacio en la CPU). */
+  /** Texto del uso (`23.1%`, `124.0 GB / 916.0 GB`...); `""` si no lleva. */
+  usage: string;
+  /** `true` si `usage` es un porcentaje (o su `N/A`) y comparte columna. */
+  percentColumn: boolean;
+  /** Detalle detras del uso: la temperatura de la fila, si tiene. */
   detail: string;
   level: Level;
 }
 
 /**
- * Tabla de recursos en un bloque de codigo monoespaciado.
- *
- * En vez de una linea por metrica con emoji, la tabla es texto: Discord la
- * pinta con ancho fijo y las columnas (etiqueta, barra, porcentaje, detalle)
- * caen siempre en el mismo sitio. El porcentaje se rellena a 6 columnas
- * ("100.0%") para que no se mueva con 1, 2 o 3 digitos ni con `N/A`.
+ * Las seis filas de recursos: CPU y GPU con su `%` y su temperatura, RAM con su
+ * `%` y los tres volumenes con sus GB y su temperatura. Cada fila es una linea:
+ * con cuadrados emoji la barra no se alinea al pixel (la fuente es proporcional
+ * y el ancho depende del cliente), asi que se prioriza que cada fila se lea bien.
  */
 function renderResources(snapshot: StatusSnapshot, options: StatusRendererOptions): Section {
-  const { display, thresholds } = options;
-  const blocks = display.progressBarBlocks;
-  const { memory, disk } = snapshot.system;
+  const { resources, thresholds, display } = options;
+  const readings = temperatureByName(snapshot.temperatures);
+  const diskByMount = new Map(snapshot.system.disks.map((disk) => [disk.mount, disk]));
 
   const cpuLevel = levelFromThreshold(snapshot.system.cpuPercent, thresholds.cpu_percent);
-  const memoryLevel = levelFromThreshold(memory?.percent ?? null, thresholds.memory_percent);
-  const diskLevel = levelFromThreshold(disk?.percent ?? null, thresholds.disk_percent);
-
-  const rows: ResourceRow[] = [
-    { label: "CPU", percent: snapshot.system.cpuPercent, detail: "", level: cpuLevel },
-    {
-      label: "RAM",
-      percent: memory?.percent ?? null,
-      detail: `${formatBytes(memory?.usedBytes ?? null)} / ${formatBytes(memory?.totalBytes ?? null)}`,
-      level: memoryLevel,
-    },
-    {
-      label: "Disco",
-      percent: disk?.percent ?? null,
-      detail: `${formatBytes(disk?.usedBytes ?? null)} / ${formatBytes(disk?.totalBytes ?? null)}`,
-      level: diskLevel,
-    },
-  ];
-
-  const labelWidth = Math.max(...rows.map((row) => displayWidth(row.label)));
-  // "100.0%" es el porcentaje mas ancho posible: la columna no depende del dato.
-  const percentWidth = Math.max(
-    ...rows.map((row) => displayWidth(formatPercent(row.percent))),
-    displayWidth("100.0%"),
+  const memoryLevel = levelFromThreshold(
+    snapshot.system.memory?.percent ?? null,
+    thresholds.memory_percent,
   );
 
-  const table = rows.map((row) => {
-    const label = row.label + " ".repeat(labelWidth - displayWidth(row.label));
-    const percent = formatPercent(row.percent).padStart(percentWidth);
-    const detail = row.detail === "" ? "" : `  ${row.detail}`;
-    const mark = anomalyMark(row.level);
-    return `${label}  ${progressBar(row.percent, blocks)}  ${percent}${detail}${mark}`;
-  });
+  const rows: ResourceRow[] = [];
+  // Niveles del uso (sin las temperaturas, que entran aparte): el color de
+  // acento no puede depender de que una lectura se muestre en una fila u otra.
+  const levels: Level[] = [cpuLevel, memoryLevel];
+
+  rows.push(
+    row(resources.cpu, readings, {
+      percent: snapshot.system.cpuPercent,
+      usage: formatPercent(snapshot.system.cpuPercent),
+      percentColumn: true,
+      level: cpuLevel,
+    }),
+  );
+
+  const gpuHasData = snapshot.system.gpuPercent !== null;
+  rows.push(
+    row(resources.gpu, readings, {
+      percent: snapshot.system.gpuPercent,
+      usage: gpuHasData ? formatPercent(snapshot.system.gpuPercent) : "",
+      percentColumn: gpuHasData,
+      // La GPU no tiene umbral de uso en el inventario: lo unico que puede
+      // marcar su fila es la temperatura, y sin dato de uso la fila sale sin
+      // barra y sin `%`, con su temperatura o `N/A`.
+      level: gpuHasData ? "ok" : "unknown",
+      detail: gpuHasData ? undefined : temperatureDetail(readingOf(resources.gpu, readings)) || NOT_AVAILABLE,
+    }),
+  );
+
+  rows.push(
+    row(resources.memory, readings, {
+      percent: snapshot.system.memory?.percent ?? null,
+      usage: formatPercent(snapshot.system.memory?.percent ?? null),
+      percentColumn: true,
+      detail: formatMemory(snapshot),
+      level: memoryLevel,
+    }),
+  );
+
+  for (const disk of resources.disks) {
+    const usage = diskByMount.get(disk.mount) ?? null;
+    const level = levelFromThreshold(usage?.percent ?? null, thresholds.disk_percent);
+    levels.push(level);
+    rows.push(
+      row(disk, readings, {
+        percent: usage?.percent ?? null,
+        usage: formatDiskUsage(usage),
+        // El uso de un disco son GB, no un porcentaje: no compite con esa
+        // columna, pero su `N/A` si se alinea con ella.
+        percentColumn: false,
+        level,
+      }),
+    );
+  }
 
   return {
-    text: ["⚙️ RECURSOS", "```", ...table, "```"].join("\n"),
-    levels: [cpuLevel, memoryLevel, diskLevel],
+    text: ["⚙️ RECURSOS", ...renderResourceLines(rows, display.progressBarBlocks)].join("\n"),
+    levels,
   };
 }
 
 /**
- * Marca de una lectura fuera de rango: lo que esta bien no se marca. Los emoji
- * van siempre al final de la linea o dentro de entradas que no se parten, para
- * que su anchura no descoloque las columnas.
+ * Fila ya montada con su temperatura enlazada. El `detail` de `overrides` es el
+ * de la propia fila (los GB de la RAM, por ejemplo); la temperatura se anade
+ * detras, y la marca de anomalia es la peor de las dos.
  */
-function anomalyMark(level: Level): string {
-  return level === "ok" ? "" : ` ${levelMark(level)}`;
+function row(
+  settings: ResourceRowSettings,
+  readings: Map<string, TemperatureReading>,
+  overrides: {
+    percent: number | null;
+    usage: string;
+    percentColumn: boolean;
+    /** Nivel del uso medido, sin contar la temperatura. */
+    level: Level;
+    /** Detalle que sustituye a la temperatura; ausente = la propia temperatura. */
+    detail?: string;
+  },
+): ResourceRow {
+  const reading = readingOf(settings, readings);
+  const temperatureLevel =
+    reading === undefined
+      ? "unknown"
+      : levelFromTemperature(reading.celsius, reading.warn, reading.crit);
+
+  return {
+    icon: settings.icon,
+    label: settings.label.toUpperCase(),
+    percent: overrides.percent,
+    usage: overrides.usage,
+    percentColumn: overrides.percentColumn,
+    detail: overrides.detail ?? temperatureDetail(reading),
+    level: mergeLevels(overrides.level, temperatureLevel),
+  };
 }
 
-function renderTemperatures(snapshot: StatusSnapshot): Section {
-  const readings = snapshot.temperatures;
-  const levels = readings.map((reading) =>
-    levelFromTemperature(reading.celsius, reading.warn, reading.crit),
+function readingOf(
+  settings: ResourceRowSettings,
+  readings: Map<string, TemperatureReading>,
+): TemperatureReading | undefined {
+  return settings.temperature === null ? undefined : readings.get(settings.temperature);
+}
+
+/** Detalle de la temperatura de una fila; las filas sin sensor no anaden nada. */
+function temperatureDetail(reading: TemperatureReading | undefined): string {
+  return reading === undefined ? "" : formatCelsius(reading.celsius);
+}
+
+function formatMemory(snapshot: StatusSnapshot): string {
+  const memory = snapshot.system.memory;
+  if (memory === null) return "";
+  return `${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}`;
+}
+
+/** Los GB de un volumen, o `N/A` si el sistema no lo conoce. */
+function formatDiskUsage(usage: DiskUsage | null): string {
+  if (usage === null) return NOT_AVAILABLE;
+  return `${formatBytes(usage.usedBytes)} / ${formatBytes(usage.totalBytes)}`;
+}
+
+/**
+ * Las dos marcas de una fila (uso y temperatura) en una sola: si un dato no se
+ * puede leer pero el otro si, manda el que se conoce.
+ */
+function mergeLevels(usage: Level, temperature: Level): Level {
+  if (usage === "unknown") return temperature;
+  if (temperature === "unknown") return usage;
+  return worstLevel([usage, temperature]);
+}
+
+function renderResourceLines(rows: ResourceRow[], blocks: number): string[] {
+  const labelWidth = Math.max(...rows.map((row) => displayWidth(row.label)));
+  // Los porcentajes comparten columna (el `N/A` tambien); los GB de un disco son
+  // mas anchos y no la mueven.
+  const percentWidth = Math.max(
+    0,
+    ...rows
+      .filter((row) => row.percentColumn)
+      .map((row) => displayWidth(row.usage)),
   );
 
-  if (readings.length === 0) return { text: null, levels };
+  return rows.map((item) => {
+    const padding = " ".repeat(labelWidth - displayWidth(item.label));
+    const cells: string[] = [];
+    if (item.percent !== null) cells.push(progressBar(item.percent, blocks));
+    if (item.usage !== "") {
+      cells.push(
+        displayWidth(item.usage) < percentWidth
+          ? item.usage.padStart(percentWidth)
+          : item.usage,
+      );
+    }
 
-  // NBSP entre el nombre y su valor: Discord no puede partir la entrada y
-  // dejar "CPU" en una linea y la temperatura en la siguiente.
-  const entries = readings.map((reading, index) => {
-    const level = levels[index] ?? "ok";
-    const mark = level === "ok" ? "" : `${levelMark(level)}\u00A0`;
-    return `${reading.name}\u00A0${mark}${formatCelsius(reading.celsius)}`;
+    const body = cells.join("  ");
+    const detail =
+      item.detail === ""
+        ? ""
+        : body === ""
+          ? item.detail
+          : ` · ${item.detail}`;
+    const mark = item.level === "ok" ? "" : `\u00A0${levelMark(item.level)}`;
+
+    return `${item.icon}\u00A0${item.label}${padding}  ${body}${detail}${mark}`;
   });
+}
 
-  const lines = packEntries(entries, { maxWidth: MAX_LINE_WIDTH, separator: " · " });
-  return { text: ["🌡️ TEMPERATURAS", ...lines].join("\n"), levels };
+/** Temperaturas por nombre de sensor; el primero gana si hubiera repetidos. */
+function temperatureByName(readings: TemperatureReading[]): Map<string, TemperatureReading> {
+  const map = new Map<string, TemperatureReading>();
+  for (const reading of readings) {
+    if (!map.has(reading.name)) map.set(reading.name, reading);
+  }
+  return map;
 }
 
 function renderServices(snapshot: StatusSnapshot, display: DisplaySettings): Section {
@@ -318,37 +420,62 @@ function renderWebsites(snapshot: StatusSnapshot): Section {
   };
 }
 
-function renderNetwork(snapshot: StatusSnapshot, options: StatusRendererOptions): string | null {
-  const lines: string[] = [];
-
-  if (options.display.showPing) {
-    lines.push(`Bot ${formatMilliseconds(snapshot.bot.pingMs)}`);
-  }
-
-  const fail2ban = snapshot.fail2ban;
-  if (!fail2ban.available) {
-    lines.push("🔒 Fail2ban: sin datos");
-  } else {
-    const jails = options.display.showFail2banBreakdown
-      ? fail2ban.jails.filter((jail) => (jail.banned ?? 0) > 0 || jail.banned === null)
-      : [];
-    const breakdown = jails.map((jail) => `${jail.name} ${jail.banned ?? "?"}`).join(" · ");
-    lines.push(
-      `🔒 Fail2ban: ${fail2ban.totalBanned} IPs baneadas${breakdown === "" ? "" : ` · ${breakdown}`}`,
-    );
-  }
-
-  if (lines.length === 0) return null;
-  const header = options.display.showPing ? "📡 RED" : null;
-  return header ? [header, ...lines].join("\n") : lines.join("\n");
+/** La latencia del propio bot, si el inventario la muestra. */
+function renderNetwork(
+  snapshot: StatusSnapshot,
+  display: DisplaySettings,
+): string | null {
+  if (!display.showPing) return null;
+  return ["📡 RED", `Bot ${formatMilliseconds(snapshot.bot.pingMs)}`].join("\n");
 }
 
+/**
+ * Fail2ban en su propio bloque: la cabecera en una linea y cada carcel en la
+ * suya. Con el desglose apagado solo va el total.
+ */
+function renderFail2ban(snapshot: StatusSnapshot, display: DisplaySettings): string {
+  const fail2ban = snapshot.fail2ban;
+  if (!fail2ban.available) return "🔒 FAIL2BAN · sin datos";
+
+  const lines = [`🔒 FAIL2BAN · ${fail2ban.totalBanned} IPs baneadas`];
+  if (display.showFail2banBreakdown) {
+    for (const jail of fail2ban.jails) {
+      if ((jail.banned ?? 0) > 0 || jail.banned === null) {
+        lines.push(`${jail.name} ${jail.banned ?? "?"}`);
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Pie de dos lineas: el sistema (distribucion, kernel y uptime) y la
+ * actualizacion (intervalo, hora y version).
+ */
 function renderFooter(snapshot: StatusSnapshot, options: StatusRendererOptions): string {
-  return [
+  const { os, uptimeSeconds } = snapshot.system;
+  const system = [
+    formatDistribution(os) ?? NOT_AVAILABLE,
+    os?.kernel ?? NOT_AVAILABLE,
+    formatUptime(uptimeSeconds),
+  ].join(" · ");
+  const updated = [
     `Actualizado cada ${formatInterval(options.updateIntervalSeconds)}`,
-    `última ${formatClock(snapshot.collectedAt)}`,
+    `última ${formatShortClock(snapshot.collectedAt)}`,
     `v${options.version}`,
   ].join(" · ");
+
+  return `${system}\n${updated}`;
+}
+
+/**
+ * `Ubuntu 24.04`: `osInfo().distro` solo trae el nombre y `release` trae cosas
+ * como `24.04.5 LTS`, asi que se muestra solo la version base.
+ */
+function formatDistribution(os: StatusSnapshot["system"]["os"]): string | null {
+  if (os === null) return null;
+  const version = /^\d+(\.\d+)?/.exec(os.release)?.[0] ?? os.release;
+  return [os.distro, version].filter((part) => part !== "").join(" ");
 }
 
 /**

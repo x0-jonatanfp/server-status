@@ -15,8 +15,9 @@ function fakePorts(): CollectStatusPorts {
   const metrics: MetricsPort = {
     collect: async () => ({
       cpuPercent: 12.4,
+      gpuPercent: 0,
       memory: null,
-      disk: null,
+      disks: [],
       uptimeSeconds: 3600,
       os: null,
     }),
@@ -74,7 +75,14 @@ describe("collectStatus", () => {
     const ports = fakePorts();
     ports.metrics.collect = async () => {
       await measure("metrics");
-      return { cpuPercent: null, memory: null, disk: null, uptimeSeconds: null, os: null };
+      return {
+        cpuPercent: null,
+        gpuPercent: null,
+        memory: null,
+        disks: [],
+        uptimeSeconds: null,
+        os: null,
+      };
     };
     ports.temperatures.collect = async () => {
       await measure("temperatures");
@@ -105,7 +113,7 @@ describe("collectStatus", () => {
 describe.runIf(process.platform === "linux")("collectStatus con los adaptadores reales", () => {
   it("una unidad inexistente se reporta unknown y no rompe el snapshot", async () => {
     const snapshot = await collectStatus({
-      metrics: createSystemMetricsPort({ diskMount: "/" }),
+      metrics: createSystemMetricsPort({ mounts: ["/"] }),
       temperatures: createTemperaturePort({
         sensors: [
           { source: "hwmon", chip: "k10temp", label: "Tctl", name: "CPU", warn: 75, crit: 90 },
@@ -122,7 +130,7 @@ describe.runIf(process.platform === "linux")("collectStatus con los adaptadores 
       botStatus: { status: () => ({ pingMs: 42, uptimeSeconds: 120 }) },
     });
 
-    expect(snapshot.system.disk).not.toBeNull();
+    expect(snapshot.system.disks.map((disk) => disk.mount)).toContain("/");
     expect(snapshot.services).toEqual([
       {
         group: "Infra",

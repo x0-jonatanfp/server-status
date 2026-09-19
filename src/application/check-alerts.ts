@@ -15,6 +15,7 @@
 import type { Alert, AlertSeverity } from "../domain/entities/alert.ts";
 import type { AlertSettings, MetricKey, MetricThreshold } from "../domain/entities/inventory.ts";
 import type { StatusSnapshot } from "../domain/entities/status-snapshot.ts";
+import type { DiskUsage } from "../domain/entities/system-metrics.ts";
 import { formatCelsius, formatMilliseconds, formatPercent } from "../domain/services/format.ts";
 
 export interface AlertCheckerOptions {
@@ -29,6 +30,16 @@ const METRIC_LABELS: Record<MetricKey, string> = {
   disk_percent: "💽 Disco",
   ping_ms: "📡 Latencia del bot",
 };
+
+/**
+ * Una metrica a evaluar. El disco lleva su punto de montaje porque el umbral
+ * vale para todos los volumenes y el aviso tiene que decir cual esta lleno.
+ */
+interface MetricReading {
+  key: MetricKey;
+  value: number | null;
+  mount?: string;
+}
 
 export class AlertChecker {
   private readonly options: AlertCheckerOptions;
@@ -71,10 +82,15 @@ function collectAlerts(
 ): Alert[] {
   const alerts: Alert[] = [];
 
-  const metrics: Array<{ key: MetricKey; value: number | null }> = [
+  const fullest = fullestDisk(snapshot.system.disks);
+  const metrics: MetricReading[] = [
     { key: "cpu_percent", value: snapshot.system.cpuPercent },
     { key: "memory_percent", value: snapshot.system.memory?.percent ?? null },
-    { key: "disk_percent", value: snapshot.system.disk?.percent ?? null },
+    {
+      key: "disk_percent",
+      value: fullest?.percent ?? null,
+      ...(fullest === null ? {} : { mount: fullest.mount }),
+    },
     { key: "ping_ms", value: snapshot.bot.pingMs },
   ];
 
@@ -87,7 +103,7 @@ function collectAlerts(
     alerts.push({
       key: `metric:${metric.key}`,
       severity,
-      title: `${METRIC_LABELS[metric.key]} fuera de rango`,
+      title: `${METRIC_LABELS[metric.key]}${metric.mount === undefined ? "" : ` ${metric.mount}`} fuera de rango`,
       detail: `${formatByMetric(metric.key, metric.value)} (aviso a partir de ${formatByMetric(metric.key, threshold.warn)}, crítico a partir de ${formatByMetric(metric.key, threshold.crit)})`,
     });
   }
@@ -106,6 +122,14 @@ function collectAlerts(
   }
 
   return alerts;
+}
+
+/** El volumen mas lleno: es el que hace saltar el umbral de disco. */
+function fullestDisk(disks: DiskUsage[]): DiskUsage | null {
+  return disks.reduce<DiskUsage | null>(
+    (worst, disk) => (worst === null || disk.percent > worst.percent ? disk : worst),
+    null,
+  );
 }
 
 function severityOf(value: number, threshold: MetricThreshold): AlertSeverity | null {

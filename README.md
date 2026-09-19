@@ -13,9 +13,11 @@ servicios systemd, webs y latencias, en un solo mensaje que se edita.**
 
 - Publica **un único mensaje** por canal y lo **edita** en cada ciclo (no borra ni
   reenvía, así no se pierden reacciones ni hilos).
-- Recoge CPU, RAM, disco y uptime con `systeminformation`.
-- Lee **temperaturas reales** de CPU, GPU, NVMe, placa y discos SATA: por
-  `/sys/class/hwmon` (sin privilegios) y `smartctl` para los SATA.
+- Recoge CPU, GPU, RAM, el uso de **cada volumen montado** y uptime: CPU y RAM
+  con `systeminformation`, el uso de la GPU de `/sys/class/drm`.
+- Lee **temperaturas reales** de CPU, GPU, NVMe y discos SATA: por
+  `/sys/class/hwmon` (sin privilegios) y `smartctl` para los SATA. Cada lectura
+  viaja en la fila del recurso al que va enlazada.
 - Comprueba las **unidades systemd** y las **webs** que le digas, por HTTP.
 - Muestra el estado y la latencia del propio bot, y el resumen de fail2ban.
 - Avisa de **umbrales** (CPU, memoria, disco, ping y temperatura) con cooldown:
@@ -91,8 +93,9 @@ vez, la lista va en `STATUS_CHANNEL_IDS`.
 - **`.env`** — token, canales, roles, intervalo, timeouts y rutas. Está
   documentado entero en `.env.example`.
 - **`inventory.yaml`** — qué se monitoriza: webs, servicios agrupados, sensores
-  con sus umbrales, qué bloques se muestran y los umbrales de alerta. Está
-  comentado en `inventory.yaml.example`.
+  con sus umbrales, las filas de recursos del mensaje (CPU, GPU, RAM y
+  volúmenes), qué bloques se muestran y los umbrales de alerta. Está comentado
+  en `inventory.yaml.example`.
 
 Un `.env` o un `inventory.yaml` mal puestos **abortan el arranque** diciendo qué
 clave falla, en vez de arrancar a medias.

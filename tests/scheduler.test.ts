@@ -39,8 +39,9 @@ function snapshot(): StatusSnapshot {
     collectedAt: new Date(2026, 8, 14, 14, 32, 10),
     system: {
       cpuPercent: 12.4,
+      gpuPercent: null,
       memory: null,
-      disk: null,
+      disks: [],
       uptimeSeconds: 3600,
       os: null,
     },

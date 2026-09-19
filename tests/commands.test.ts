@@ -37,7 +37,7 @@ function tmpStatePath(): string {
 function snapshot(): StatusSnapshot {
   return {
     collectedAt: new Date(2026, 8, 14, 14, 32, 10),
-    system: { cpuPercent: 12.4, memory: null, disk: null, uptimeSeconds: 3600, os: null },
+    system: { cpuPercent: 12.4, gpuPercent: null, memory: null, disks: [], uptimeSeconds: 3600, os: null },
     temperatures: [],
     services: [],
     websites: [],

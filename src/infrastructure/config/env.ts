@@ -48,8 +48,6 @@ export interface ActivityConfig {
 export interface AppConfig {
   discordToken: string;
   botDisplayName: string;
-  /** Dominio o nombre publico del host, si se quiere mostrar junto al SO. */
-  hostLabel: string | null;
   activity: ActivityConfig;
   /** Canales donde se publica el estado. Al menos uno. */
   statusChannelIds: string[];
@@ -58,7 +56,6 @@ export interface AppConfig {
   requiredRoles: string[];
   updateIntervalSeconds: number;
   httpTimeoutMs: number;
-  diskMount: string;
   statePath: string;
   inventoryPath: string;
   logFile: string | null;
@@ -71,7 +68,6 @@ const DEFAULT_INVENTORY_PATH = "inventory.yaml";
 const DEFAULT_STATE_PATH = "data/state.json";
 const DEFAULT_UPDATE_INTERVAL_SECONDS = 300;
 const DEFAULT_HTTP_TIMEOUT_MS = 8000;
-const DEFAULT_DISK_MOUNT = "/";
 const DEFAULT_SUDO_PATH = "/usr/bin/sudo";
 const DEFAULT_FAIL2BAN_CLIENT_PATH = "/usr/bin/fail2ban-client";
 
@@ -189,7 +185,6 @@ export function parseAppConfig(env: Record<string, string | undefined>): AppConf
   return {
     discordToken: requiredEnv(env, "DISCORD_TOKEN"),
     botDisplayName: optionalEnv(env, "BOT_DISPLAY_NAME") ?? "server-status",
-    hostLabel: optionalEnv(env, "HOST_LABEL"),
     activity: {
       type: parseActivityType(readEnv(env, "BOT_ACTIVITY_TYPE")),
       name: optionalEnv(env, "BOT_ACTIVITY_NAME") ?? "server status",
@@ -205,7 +200,6 @@ export function parseAppConfig(env: Record<string, string | undefined>): AppConf
       max: 86_400,
     }),
     httpTimeoutMs: intEnv(env, "HTTP_TIMEOUT_MS", DEFAULT_HTTP_TIMEOUT_MS, { min: 100 }),
-    diskMount: optionalEnv(env, "DISK_MOUNT") ?? DEFAULT_DISK_MOUNT,
     statePath: optionalEnv(env, "STATE_PATH") ?? DEFAULT_STATE_PATH,
     inventoryPath: optionalEnv(env, "INVENTORY_PATH") ?? DEFAULT_INVENTORY_PATH,
     logFile: readEnv(env, "LOG_FILE") ?? DEFAULT_LOG_FILE,

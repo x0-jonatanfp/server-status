@@ -66,7 +66,12 @@ export async function main(): Promise<void> {
   const client = createDiscordClient();
   const resolver = createChannelResolver(client);
 
-  const metrics = createSystemMetricsPort({ diskMount: app.diskMount });
+  // Los volumenes y el sensor de uso de la GPU salen del inventario: el
+  // composition root solo los pasa al adaptador que toca el sistema.
+  const metrics = createSystemMetricsPort({
+    mounts: inventory.resources.disks.map((disk) => disk.mount),
+    gpuBusyPercentPath: inventory.resources.gpu.busyPercentPath,
+  });
   const temperatures = createTemperaturePort({ sensors: inventory.temperatures });
   const services = createServiceStatusPort({ groups: inventory.services });
   const websites = createWebsiteProbePort({
@@ -81,8 +86,8 @@ export async function main(): Promise<void> {
 
   const renderer = createStatusRenderer({
     display: inventory.display,
+    resources: inventory.resources,
     thresholds: inventory.alerts.thresholds,
-    hostLabel: app.hostLabel,
     updateIntervalSeconds: app.updateIntervalSeconds,
     version: VERSION,
   });

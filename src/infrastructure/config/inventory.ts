@@ -16,11 +16,15 @@ import { load as loadYaml } from "js-yaml";
 
 import type {
   AlertSettings,
+  DiskResourceSettings,
   DisplayColors,
   DisplaySettings,
+  GpuResourceSettings,
   Inventory,
   MetricKey,
   MetricThreshold,
+  ResourceRowSettings,
+  ResourceSettings,
   ServiceGroup,
   TemperatureSensor,
   WebsiteTarget,
@@ -40,6 +44,7 @@ const KNOWN_TOP_LEVEL_KEYS = [
   "websites",
   "services",
   "temperatures",
+  "resources",
   "display",
   "alerts",
 ] as const;
@@ -48,9 +53,27 @@ const DEFAULT_DISPLAY: DisplaySettings = {
   showGroups: true,
   showFail2banBreakdown: true,
   showPing: true,
-  progressBarBlocks: 5,
+  progressBarBlocks: 10,
   colors: { ok: "#00FF41", warning: "#FFAA00", critical: "#FF0040" },
 };
+
+/**
+ * Filas de recursos por defecto: sin `resources` el mensaje sigue mostrando
+ * CPU, GPU, RAM y el volumen raiz, solo que sin enlazar ningun sensor.
+ */
+function defaultResources(): ResourceSettings {
+  return {
+    cpu: { label: "CPU", icon: "🧠", temperature: null },
+    gpu: {
+      label: "GPU",
+      icon: "🎮",
+      temperature: null,
+      busyPercentPath: "/sys/class/drm/card*/device/gpu_busy_percent",
+    },
+    memory: { label: "RAM", icon: "💾", temperature: null },
+    disks: [{ label: "Disco", icon: "💽", temperature: null, mount: "/" }],
+  };
+}
 
 const METRIC_KEYS: readonly MetricKey[] = [
   "cpu_percent",
@@ -148,6 +171,78 @@ function parseTemperatures(value: unknown): TemperatureSensor[] {
   });
 }
 
+function parseResourceRow(
+  object: Record<string, unknown>,
+  path: string,
+  /** Claves propias de la fila (el mount de un disco, el fichero de la GPU). */
+  extraKeys: readonly string[] = [],
+): ResourceRowSettings {
+  expectKnownKeys(object, ["label", "icon", "temperature", ...extraKeys], path);
+  return {
+    label: expectString(object["label"], `${path}.label`),
+    icon: expectString(object["icon"], `${path}.icon`),
+    temperature:
+      object["temperature"] === undefined || object["temperature"] === null
+        ? null
+        : expectString(object["temperature"], `${path}.temperature`),
+  };
+}
+
+function parseGpu(object: Record<string, unknown>, path: string): GpuResourceSettings {
+  return {
+    ...parseResourceRow(object, path, ["busy_percent_path"]),
+    busyPercentPath:
+      object["busy_percent_path"] === undefined || object["busy_percent_path"] === null
+        ? null
+        : expectString(object["busy_percent_path"], `${path}.busy_percent_path`),
+  };
+}
+
+function parseDisks(value: unknown, path: string): DiskResourceSettings[] {
+  return expectArray(value, path).map((entry, i) => {
+    const diskPath = `${path}[${i}]`;
+    const object = expectObject(entry, diskPath);
+    return {
+      ...parseResourceRow(object, diskPath, ["mount"]),
+      mount: expectString(object["mount"], `${diskPath}.mount`),
+    };
+  });
+}
+
+/** Las filas de recursos del mensaje (etiqueta, emoji y sensores enlazados). */
+function parseResources(value: unknown): ResourceSettings {
+  const defaults = defaultResources();
+  if (value === undefined) return defaults;
+
+  const object = expectObject(value, "inventory.resources");
+  expectKnownKeys(object, ["cpu", "gpu", "memory", "disks"], "inventory.resources");
+
+  return {
+    cpu:
+      object["cpu"] === undefined
+        ? defaults.cpu
+        : parseResourceRow(
+            expectObject(object["cpu"], "inventory.resources.cpu"),
+            "inventory.resources.cpu",
+          ),
+    gpu:
+      object["gpu"] === undefined
+        ? defaults.gpu
+        : parseGpu(expectObject(object["gpu"], "inventory.resources.gpu"), "inventory.resources.gpu"),
+    memory:
+      object["memory"] === undefined
+        ? defaults.memory
+        : parseResourceRow(
+            expectObject(object["memory"], "inventory.resources.memory"),
+            "inventory.resources.memory",
+          ),
+    disks:
+      object["disks"] === undefined
+        ? defaults.disks
+        : parseDisks(object["disks"], "inventory.resources.disks"),
+  };
+}
+
 function parseColors(value: unknown): DisplayColors {
   const object = expectObject(value, "inventory.display.colors");
   expectKnownKeys(object, ["ok", "warning", "critical"], "inventory.display.colors");
@@ -241,6 +336,30 @@ function parseAlerts(value: unknown): AlertSettings {
   return { cooldownMinutes, thresholds };
 }
 
+/**
+ * Comprueba que cada sensor enlazado en `resources` existe de verdad en
+ * `temperatures`: un nombre mal escrito dejaria la fila sin temperatura sin que
+ * nadie se enterase.
+ */
+function validateTemperatureLinks(inventory: Inventory, source: string): void {
+  const names = new Set(inventory.temperatures.map((sensor) => sensor.name));
+  const links: Array<[string, string | null]> = [
+    [`${source}: resources.cpu`, inventory.resources.cpu.temperature],
+    [`${source}: resources.gpu`, inventory.resources.gpu.temperature],
+    [`${source}: resources.memory`, inventory.resources.memory.temperature],
+    ...inventory.resources.disks.map(
+      (disk, i) => [`${source}: resources.disks[${i}]`, disk.temperature] as [string, string | null],
+    ),
+  ];
+
+  for (const [path, name] of links) {
+    if (name === null || names.has(name)) continue;
+    fail(
+      `${path}.temperature: no hay ningun sensor llamado ${JSON.stringify(name)} en inventory.temperatures`,
+    );
+  }
+}
+
 /** Valida el contenido ya parseado del inventario. */
 export function parseInventory(raw: unknown, source = "inventory.yaml"): Inventory {
   const object = expectObject(raw, source);
@@ -248,14 +367,17 @@ export function parseInventory(raw: unknown, source = "inventory.yaml"): Invento
   if (object["services"] === undefined) {
     fail(`${source}: falta la clave obligatoria services`);
   }
-  return {
+  const inventory: Inventory = {
     websites: object["websites"] === undefined ? [] : parseWebsites(object["websites"]),
     services: parseServices(object["services"]),
     temperatures:
       object["temperatures"] === undefined ? [] : parseTemperatures(object["temperatures"]),
+    resources: parseResources(object["resources"]),
     display: parseDisplay(object["display"]),
     alerts: parseAlerts(object["alerts"]),
   };
+  validateTemperatureLinks(inventory, source);
+  return inventory;
 }
 
 /** Lee y valida `inventory.yaml`. */

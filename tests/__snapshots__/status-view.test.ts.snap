@@ -2,17 +2,13 @@
 
 exports[`renderStatusView > compone el mensaje completo 1`] = `
 [
-  "🟢 SERVER STATUS · void · 14:32:10
-example.com · Ubuntu 24.04 · kernel 7.0.0 · up 4d 12h 07m",
   "⚙️ RECURSOS
-\`\`\`
-CPU    █░░░░   12.4%
-RAM    █░░░░   18.4%  5.8 GB / 31.3 GB
-Disco  ██░░░   36.0%  164.5 GB / 456.9 GB
-\`\`\`",
-  "🌡️ TEMPERATURAS
-CPU 53.6 °C · GPU 44.0 °C · NVMe 40.9 °C · Placa 35.0 °C
-SSD 38.0 °C · HDD 34.0 °C",
+🧠 CPU   🟪🟪⬜⬜⬜⬜⬜⬜⬜⬜  23.1% · 45.1 °C
+🎮 GPU   ⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜   0.0% · 42.0 °C
+💾 RAM   🟪🟪⬜⬜⬜⬜⬜⬜⬜⬜  22.6% · 7.1 GB / 31.3 GB
+💽 NVME  🟪🟪🟪🟪⬜⬜⬜⬜⬜⬜  169.2 GB / 456.9 GB · 36.9 °C
+📀 SSD   🟪🟪🟪🟪🟪🟪🟪⬜⬜⬜  78.0 GB / 116.0 GB · 34.0 °C
+🗄️ HDD   🟪⬜⬜⬜⬜⬜⬜⬜⬜⬜  124.0 GB / 916.0 GB · 30.0 °C",
   "🧩 SERVICIOS 6/6 activos
 Infra ✅ nginx ✅ fail2ban ✅ postgresql@16-main
 Apps  ✅ example ✅ app-pixel
@@ -22,8 +18,11 @@ Bots  ✅ void-agent",
 ✅ www.example.com 105 ms
 ✅ example.org 131 ms",
   "📡 RED
-Bot 42 ms
-🔒 Fail2ban: 37 IPs baneadas · recidive 31 · sshd 6",
-  "Actualizado cada 5 min · última 14:32:10 · v1.0.0",
+Bot 42 ms",
+  "🔒 FAIL2BAN · 69 IPs baneadas
+postfix 4
+recidive 65",
+  "Ubuntu 24.04 · 7.0.0-31-generic · 2d 01h 48m
+Actualizado cada 5 min · última 14:32 · v1.0.0",
 ]
 `;

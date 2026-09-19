@@ -19,8 +19,9 @@ function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
     collectedAt: new Date(2026, 8, 14, 14, 32, 10),
     system: {
       cpuPercent: 10,
+      gpuPercent: null,
       memory: { percent: 20, usedBytes: 0, totalBytes: 0 },
-      disk: { mount: "/", percent: 30, usedBytes: 0, totalBytes: 0 },
+      disks: [{ mount: "/", percent: 30, usedBytes: 0, totalBytes: 0 }],
       uptimeSeconds: 3600,
       os: null,
     },
@@ -106,8 +107,9 @@ describe("AlertChecker", () => {
       snapshot({
         system: {
           cpuPercent: 91,
+          gpuPercent: null,
           memory: { percent: 75, usedBytes: 0, totalBytes: 0 },
-          disk: { mount: "/", percent: 96, usedBytes: 0, totalBytes: 0 },
+          disks: [{ mount: "/", percent: 96, usedBytes: 0, totalBytes: 0 }],
           uptimeSeconds: 3600,
           os: null,
         },
@@ -129,12 +131,39 @@ describe("AlertChecker", () => {
     ]);
   });
 
+  it("del disco avisa el volumen mas lleno y dice cual es", () => {
+    const alerts = new AlertChecker({ settings: SETTINGS });
+
+    const emitted = alerts.check(
+      snapshot({
+        system: {
+          ...snapshot().system,
+          disks: [
+            { mount: "/", percent: 30, usedBytes: 0, totalBytes: 0 },
+            { mount: "/mnt/storage", percent: 96, usedBytes: 0, totalBytes: 0 },
+          ],
+        },
+      }),
+    );
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ key: "metric:disk_percent", severity: "critical" });
+    expect(emitted[0]?.title).toContain("/mnt/storage");
+  });
+
   it("no alerta de lo que no se puede medir ni de lo que esta bien", () => {
     const alerts = new AlertChecker({ settings: SETTINGS });
 
     const emitted = alerts.check(
       snapshot({
-        system: { cpuPercent: null, memory: null, disk: null, uptimeSeconds: null, os: null },
+        system: {
+          cpuPercent: null,
+          gpuPercent: null,
+          memory: null,
+          disks: [],
+          uptimeSeconds: null,
+          os: null,
+        },
         temperatures: [
           { source: "smartctl", name: "SSD", celsius: null, warn: 60, crit: 70, detail: "/dev/sda" },
           { source: "hwmon", name: "GPU", celsius: 44, warn: 80, crit: 91, detail: "amdgpu" },

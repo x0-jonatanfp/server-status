@@ -69,18 +69,6 @@ export function worstLevel(levels: Level[]): Level {
   return known.reduce((worst, level) => (RANK[level] > RANK[worst] ? level : worst), "ok");
 }
 
-/** Emoji del estado global (el que abre el mensaje y el color de acento). */
-export function levelEmoji(level: Level): string {
-  switch (level) {
-    case "critical":
-      return "🔴";
-    case "warning":
-      return "🟠";
-    default:
-      return "🟢";
-  }
-}
-
 /** Emoji de una linea concreta: las correctas no se marcan. */
 export function levelMark(level: Level): string {
   switch (level) {

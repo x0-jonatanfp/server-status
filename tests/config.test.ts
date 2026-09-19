@@ -55,7 +55,6 @@ describe("loadAppConfig + loadInventory", () => {
     expect(app.botDisplayName).toBe("server-status");
     expect(app.updateIntervalSeconds).toBe(300);
     expect(app.httpTimeoutMs).toBe(8000);
-    expect(app.diskMount).toBe("/");
     expect(app.alertChannelId).toBeNull();
     expect(inventory.websites).toEqual([{ url: "https://example.com", label: "example.com" }]);
     expect(inventory.services).toEqual([{ group: "Infra", units: ["nginx", "fail2ban"] }]);
@@ -185,6 +184,22 @@ describe("loadAppConfig + loadInventory", () => {
         "services:\n  - group: A\n    units: [a]\ndisplay:\n  progress_bar_blocks: 40",
         /progress_bar_blocks debe ser <= 10/,
       ],
+      [
+        "services:\n  - group: A\n    units: [a]\nresources:\n  cpu:\n    label: CPU",
+        /resources\.cpu\.icon debe ser un texto no vacio/,
+      ],
+      [
+        "services:\n  - group: A\n    units: [a]\nresources:\n  disks:\n    - label: HD\n      icon: \"💽\"",
+        /resources\.disks\[0\]\.mount debe ser un texto no vacio/,
+      ],
+      [
+        "services:\n  - group: A\n    units: [a]\nresources:\n  cpu:\n    label: CPU\n    icon: \"🧠\"\n    temperature: Chapa",
+        /no hay ningun sensor llamado "Chapa"/,
+      ],
+      [
+        "services:\n  - group: A\n    units: [a]\nresources:\n  ventilador: 3",
+        /ventilador no es una clave conocida/,
+      ],
     ];
 
     for (const [inventory, expected] of cases) {
@@ -200,11 +215,57 @@ describe("loadAppConfig + loadInventory", () => {
       showGroups: true,
       showFail2banBreakdown: true,
       showPing: true,
-      progressBarBlocks: 5,
+      progressBarBlocks: 10,
       colors: { ok: "#00FF41", warning: "#FFAA00", critical: "#FF0040" },
     });
     expect(inventory.alerts.cooldownMinutes).toBe(30);
     expect(inventory.alerts.thresholds.ping_ms).toEqual({ warn: 100, crit: 500 });
+  });
+
+  it("sin bloque resources deja las seis filas con valores por defecto", () => {
+    const inventory = parseInventory({
+      services: [{ group: "Infra", units: ["nginx"] }],
+    });
+
+    expect(inventory.resources.cpu).toEqual({ label: "CPU", icon: "🧠", temperature: null });
+    expect(inventory.resources.gpu).toEqual({
+      label: "GPU",
+      icon: "🎮",
+      temperature: null,
+      busyPercentPath: "/sys/class/drm/card*/device/gpu_busy_percent",
+    });
+    expect(inventory.resources.memory).toEqual({ label: "RAM", icon: "💾", temperature: null });
+    expect(inventory.resources.disks).toEqual([
+      { label: "Disco", icon: "💽", temperature: null, mount: "/" },
+    ]);
+  });
+
+  it("lee las filas de recursos y enlaza sus sensores", () => {
+    const inventory = parseInventory({
+      services: [{ group: "Infra", units: ["nginx"] }],
+      temperatures: [
+        { source: "hwmon", chip: "k10temp", label: "Tctl", name: "CPU", warn: 75, crit: 90 },
+        { source: "smartctl", device: "/dev/sda", name: "SSD", warn: 60, crit: 70 },
+      ],
+      resources: {
+        cpu: { label: "cpu", icon: "🧠", temperature: "CPU" },
+        gpu: { label: "GPU", icon: "🎮", temperature: null, busy_percent_path: null },
+        memory: { label: "RAM", icon: "💾" },
+        disks: [
+          { label: "ssd", icon: "📀", mount: "/mnt/ssd", temperature: "SSD" },
+          { label: "datos", icon: "🗄️", mount: "/mnt/storage" },
+        ],
+      },
+    });
+
+    expect(inventory.resources.cpu).toEqual({ label: "cpu", icon: "🧠", temperature: "CPU" });
+    expect(inventory.resources.gpu.busyPercentPath).toBeNull();
+    // Una fila sin `temperature` no queda sin fila: solo sin temperatura.
+    expect(inventory.resources.memory).toEqual({ label: "RAM", icon: "💾", temperature: null });
+    expect(inventory.resources.disks).toEqual([
+      { label: "ssd", icon: "📀", temperature: "SSD", mount: "/mnt/ssd" },
+      { label: "datos", icon: "🗄️", temperature: null, mount: "/mnt/storage" },
+    ]);
   });
 
   it("lee alertas y display personalizados", () => {
@@ -252,7 +313,11 @@ describe("plantillas versionadas", () => {
     expect(inventory.services.length).toBeGreaterThan(0);
     expect(inventory.temperatures.length).toBeGreaterThan(0);
     expect(inventory.temperatures.some((sensor) => sensor.source === "smartctl")).toBe(true);
-    expect(inventory.display.progressBarBlocks).toBe(5);
+    expect(inventory.display.progressBarBlocks).toBe(10);
+    expect(inventory.resources.disks.length).toBeGreaterThan(0);
+    // Cada fila enlaza un sensor que existe de verdad (lo valida el parser).
+    expect(inventory.resources.cpu.temperature).not.toBeNull();
+    expect(inventory.resources.disks.some((disk) => disk.temperature !== null)).toBe(true);
   });
 });
 

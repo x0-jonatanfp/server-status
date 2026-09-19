@@ -53,8 +53,16 @@ export function formatUptime(seconds: number | null): string {
 
 /** Hora local en `HH:MM:SS`. */
 export function formatClock(date: Date): string {
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  return formatShortClock(date) + `:${pad(date.getSeconds())}`;
+}
+
+/** Hora local en `HH:MM`, sin segundos (el pie del mensaje). */
+export function formatShortClock(date: Date): string {
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
 }
 
 /** Antiguedad de algo: `hace 12 s`, `hace 01h 05m`. */
@@ -72,12 +80,11 @@ export function formatInterval(seconds: number): string {
 }
 
 /**
- * Barra de progreso de bloques, con el numero de bloques del inventario.
+ * Barra de progreso de cuadrados, con el numero de bloques del inventario.
  *
- * Los bloques son caracteres de dibujo (`█` / `░`), no emoji: los emoji (el
- * `🟪`/`⬜` anterior) no tienen ancho estable en Discord y desalinean todo lo
- * que va detras. Como estos caracteres son de ancho fijo, la barra ocupa
- * siempre `blocks` columnas pase lo que pase.
+ * Regla: un consumo mayor que 0 pinta al menos un bloque, y 0 % (o un dato que
+ * no se ha podido leer) se queda entero en blanco. Si no, un 2 % en una barra
+ * de 10 bloques saldria vacio y pareceria que no hay consumo.
  */
 export function progressBar(
   percent: number | null,
@@ -87,21 +94,28 @@ export function progressBar(
 ): string {
   if (percent === null || !Number.isFinite(percent)) return empty.repeat(blocks);
   const clamped = Math.min(100, Math.max(0, percent));
-  const used = Math.round((clamped / 100) * blocks);
+  const used = clamped > 0 ? Math.max(1, Math.round((clamped / 100) * blocks)) : 0;
   return filled.repeat(used) + empty.repeat(blocks - used);
 }
 
-/** Bloque lleno y bloque vacio de las barras (no son emoji: ancho estable). */
-export const FILLED_BLOCK = "█";
-export const EMPTY_BLOCK = "░";
+/**
+ * Bloque lleno y bloque vacio de las barras.
+ *
+ * Son emoji (cuadrados) y por eso las columnas de una fila de recursos no
+ * cuadran al pixel: dentro del mensaje la fuente es proporcional y el ancho de
+ * un emoji depende del cliente. Se acepta a cambio de que la barra se vea como
+ * el mock cerrado con el Dueno; donde si importa el ancho (las listas que se
+ * empaquetan) se mide con `displayWidth`, que cuenta cada emoji como 2 columnas.
+ */
+export const FILLED_BLOCK = "🟪";
+export const EMPTY_BLOCK = "⬜";
 
 /**
  * Ancho de un texto en columnas, que es lo que importa al alinear.
  *
- * En un bloque de codigo los caracteres de dibujo y el ASCII ocupan una
- * columna, pero los emoji (✅, ❌, ⚠️, ❔) ocupan dos. Los selectores de
- * variacion y los ZWJ no ocupan nada. Asi el empaquetado de las listas no se
- * pasa del ancho por contar un emoji como un solo caracter.
+ * El ASCII ocupa una columna, pero los emoji (✅, ❌, ⚠️, ❔, 🟪, ⬜) ocupan
+ * dos. Los selectores de variacion y los ZWJ no ocupan nada. Asi el empaquetado
+ * de las listas no se pasa del ancho por contar un emoji como un solo caracter.
  */
 export function displayWidth(text: string): number {
   let width = 0;

@@ -25,6 +25,8 @@ services:
 # privilegios; `source: smartctl` consulta un disco SATA y puede requerir una
 # regla NOPASSWD para /usr/sbin/smartctl.
 # Las lecturas fuera del rango 1-120 C se descartan y el sensor sale N/A.
+# Aqui no hay una seccion de temperaturas en el mensaje: cada lectura viaja en
+# la fila de recursos que la enlaza con `temperature`.
 temperatures:
   - source: hwmon
     chip: k10temp
@@ -44,19 +46,41 @@ temperatures:
     name: NVMe
     warn: 70
     crit: 79
-  # Los chips que no publican fichero `tempN_label` (tipico en placas base) se
-  # leen por indice: `index: 1` es temp1.
-  - source: hwmon
-    chip: it8792
-    index: 1
-    name: Placa
-    warn: 65
-    crit: 80
   - source: smartctl
     device: /dev/sda
     name: SSD
     warn: 60
     crit: 70
+
+# Filas de recursos del mensaje, en este orden: CPU, GPU, RAM y los volumenes.
+# La etiqueta (se pinta en mayusculas) y el emoji salen de aqui, y `temperature`
+# enlaza con el `name` de un sensor de arriba: si no existe, el arranque aborta.
+resources:
+  cpu:
+    label: CPU
+    icon: "🧠"
+    temperature: CPU
+  gpu:
+    label: GPU
+    icon: "🎮"
+    temperature: GPU
+    # Fichero del kernel con el uso de la GPU (`*` vale por la tarjeta que sea).
+    # Si no existe o no se puede leer, la fila sale sin barra y sin porcentaje.
+    busy_percent_path: /sys/class/drm/card*/device/gpu_busy_percent
+  memory:
+    label: RAM
+    icon: "💾"
+  # Un volumen por fila: el punto de montaje tiene que coincidir EXACTAMENTE con
+  # el que reporta el sistema. Un mount que no exista deja la fila sin datos, no
+  # se sustituye por el de su directorio padre.
+  disks:
+    - label: Disco
+      icon: "💽"
+      mount: /
+      temperature: NVMe
+    - label: Datos
+      icon: "📀"
+      mount: /mnt/datos
 
 # Que se muestra en el mensaje y con que colores.
 display:
@@ -65,7 +89,8 @@ display:
   show_groups: false
   show_fail2ban_breakdown: true
   show_ping: true
-  progress_bar_blocks: 5
+  # Cuadrados de las barras de recursos (1-10).
+  progress_bar_blocks: 10
   colors:
     ok: "#00FF41"
     warning: "#FFAA00"

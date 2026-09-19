@@ -10,6 +10,7 @@ import {
   formatInterval,
   formatMilliseconds,
   formatPercent,
+  formatShortClock,
   formatUptime,
   NOT_AVAILABLE,
   packEntries,
@@ -60,25 +61,30 @@ describe("formatPercent, formatCelsius y formatMilliseconds", () => {
 });
 
 describe("progressBar", () => {
-  it("pinta tantos bloques como porcentaje, con caracteres de ancho fijo", () => {
-    // Nada de emoji: `🟪`/`⬜` no tienen ancho estable en Discord y desalinean
-    // el porcentaje y el detalle que van detras.
-    expect(progressBar(0, 5)).toBe("░░░░░");
-    expect(progressBar(100, 5)).toBe("█████");
-    expect(progressBar(12.4, 5)).toBe("█░░░░");
-    expect(progressBar(36, 10)).toBe("████░░░░░░");
+  it("pinta cuadrados, tantos como porcentaje", () => {
+    expect(progressBar(0, 10)).toBe("⬜".repeat(10));
+    expect(progressBar(100, 10)).toBe("🟪".repeat(10));
+    expect(progressBar(12.4, 10)).toBe("🟪" + "⬜".repeat(9));
+    expect(progressBar(36, 5)).toBe("🟪🟪⬜⬜⬜");
+  });
+
+  it("con consumo mayor que 0 pinta al menos un bloque", () => {
+    // Un 2 % en una barra de 10 bloques redondearia a 0 y pareceria vacio.
+    expect(progressBar(2, 10)).toBe("🟪" + "⬜".repeat(9));
+    expect(progressBar(0.4, 10)).toBe("🟪" + "⬜".repeat(9));
+    expect(progressBar(0, 10)).toBe("⬜".repeat(10));
   });
 
   it("no se sale del numero de bloques ni con datos raros", () => {
-    expect(progressBar(200, 5)).toBe("█████");
-    expect(progressBar(-10, 5)).toBe("░░░░░");
-    expect(progressBar(null, 5)).toBe("░░░░░");
-    expect(progressBar(Number.NaN, 5)).toBe("░░░░░");
+    expect(progressBar(200, 5)).toBe("🟪".repeat(5));
+    expect(progressBar(-10, 5)).toBe("⬜".repeat(5));
+    expect(progressBar(null, 5)).toBe("⬜".repeat(5));
+    expect(progressBar(Number.NaN, 5)).toBe("⬜".repeat(5));
   });
 
   it("ocupa siempre el mismo numero de columnas", () => {
     for (const percent of [0, 12.4, 36, 99.9, 100, null]) {
-      expect(displayWidth(progressBar(percent, 7))).toBe(7);
+      expect(displayWidth(progressBar(percent, 7))).toBe(14);
     }
   });
 });
@@ -96,6 +102,8 @@ describe("displayWidth", () => {
     expect(displayWidth("❌")).toBe(2);
     expect(displayWidth("⚠️")).toBe(2);
     expect(displayWidth("❔")).toBe(2);
+    expect(displayWidth("🟪🟪⬜")).toBe(6);
+    expect(displayWidth("🗄️ HDD")).toBe(6);
   });
 });
 
@@ -142,6 +150,11 @@ describe("formatClock y formatInterval", () => {
   it("da la hora con dos digitos", () => {
     expect(formatClock(new Date(2026, 8, 14, 9, 5, 3))).toBe("09:05:03");
     expect(formatClock(new Date(2026, 8, 14, 14, 32, 10))).toBe("14:32:10");
+  });
+
+  it("sin segundos, para el pie del mensaje", () => {
+    expect(formatShortClock(new Date(2026, 8, 14, 9, 5, 3))).toBe("09:05");
+    expect(formatShortClock(new Date(2026, 8, 14, 14, 32, 10))).toBe("14:32");
   });
 
   it("elige la unidad del intervalo", () => {
