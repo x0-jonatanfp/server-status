@@ -6,14 +6,33 @@ import type {
   MetricKey,
   MetricThreshold,
 } from "../src/domain/entities/inventory.ts";
+import type { ServiceStatus } from "../src/domain/entities/service-status.ts";
 import type { StatusSnapshot } from "../src/domain/entities/status-snapshot.ts";
+import { displayWidth } from "../src/domain/services/format.ts";
 import {
   countComponents,
   createStatusRenderer,
+  MAX_LINE_WIDTH,
   renderStatusView,
   toComponents,
   type StatusRendererOptions,
 } from "../src/infrastructure/discord/status-view.ts";
+
+/** Espacio duro: es el que impide que Discord parta una entrada de la lista. */
+const NBSP = "\u00A0";
+
+/** Emoji de estado que puede abrir una entrada de servicio. */
+const STATE_MARKS = ["✅", "❌", "⚠️", "❔"];
+
+/** Columna donde arranca la primera marca de estado de una linea. */
+function markColumn(line: string): number {
+  const columns = STATE_MARKS.map((mark) => line.indexOf(mark)).filter((index) => index >= 0);
+  return columns.length === 0 ? -1 : Math.min(...columns);
+}
+
+function endsWithMark(line: string): boolean {
+  return STATE_MARKS.some((mark) => line.endsWith(mark));
+}
 
 const DISPLAY: DisplaySettings = {
   showGroups: true,
@@ -102,6 +121,29 @@ function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
   };
 }
 
+/** Bloque del mensaje que empieza por el emoji indicado. */
+function section(view: { blocks: string[] }, emoji: string): string {
+  const block = view.blocks.find((candidate) => candidate.startsWith(emoji));
+  if (block === undefined) throw new Error(`no hay bloque que empiece por ${emoji}`);
+  return block;
+}
+
+function lines(block: string): string[] {
+  return block.split("\n");
+}
+
+/** Filas de la tabla de recursos, sin las cabeceras ni las vallas del codigo. */
+function resourceRows(view: { blocks: string[] }): string[] {
+  const all = lines(section(view, "⚙️"));
+  expect(all[1]).toBe("```");
+  expect(all.at(-1)).toBe("```");
+  return all.slice(2, -1);
+}
+
+function serviceLines(view: { blocks: string[] }): string[] {
+  return lines(section(view, "🧩")).slice(1);
+}
+
 describe("renderStatusView", () => {
   it("compone el mensaje completo", () => {
     expect(renderStatusView(snapshot(), options()).blocks).toMatchSnapshot();
@@ -147,6 +189,82 @@ describe("renderStatusView", () => {
     expect(view.blocks[0]).toContain("example.com · Ubuntu 24.04 · kernel 7.0.0");
   });
 
+  it("la tabla de recursos va en un bloque de codigo y alinea las columnas", () => {
+    const view = renderStatusView(
+      snapshot({
+        system: {
+          ...snapshot().system,
+          // 1, 2 y 3 digitos (mas el caso "100.0%") en el mismo mensaje.
+          cpuPercent: 7.2,
+          memory: { percent: 18.4, usedBytes: 5.8 * 1024 ** 3, totalBytes: 31.3 * 1024 ** 3 },
+          disk: {
+            mount: "/",
+            percent: 100,
+            usedBytes: 456.9 * 1024 ** 3,
+            totalBytes: 456.9 * 1024 ** 3,
+          },
+        },
+      }),
+      options(),
+    );
+
+    const rows = resourceRows(view);
+    expect(rows).toHaveLength(3);
+    expect(section(view, "⚙️")).toContain("7.2%");
+    expect(section(view, "⚙️")).toContain("100.0%");
+    // Nada de emoji dentro de la tabla: romperian el monoespaciado.
+    expect(section(view, "⚙️")).not.toMatch(/🧠|💾|💽|🟪|⬜/);
+
+    // La barra empieza en la misma columna en las tres filas...
+    expect(new Set(rows.map((row) => row.search(/[█░]/))).size).toBe(1);
+    // ...y el porcentaje termina en la misma columna tenga uno, dos o tres
+    // digitos (los numeros van alineados a la derecha, como en una tabla).
+    expect(
+      new Set(
+        rows.map((row) => {
+          const match = /\d+\.\d%/.exec(row);
+          return (match?.index ?? -1) + (match?.[0].length ?? 0);
+        }),
+      ).size,
+    ).toBe(1);
+    // El detalle ("5.8 GB / 31.3 GB") tambien arranca en la misma columna en
+    // las filas que lo tienen (la CPU no lo lleva).
+    const detailStarts = rows.map(
+      (row) => /[\d.]+ (?:GB|TB|MB|KB|B) \/ [\d.]+ (?:GB|TB|MB|KB|B)/.exec(row)?.index ?? -1,
+    );
+    const withDetail = detailStarts.filter((column) => column >= 0);
+    expect(withDetail).toHaveLength(2);
+    expect(new Set(withDetail).size).toBe(1);
+  });
+
+  it("la tabla sigue alineada cuando falta el dato (N/A)", () => {
+    const view = renderStatusView(
+      snapshot({
+        // Una fila sin dato entre dos que si lo tienen: la columna no se mueve.
+        system: {
+          ...snapshot().system,
+          cpuPercent: null,
+          memory: { percent: 18.4, usedBytes: 5.8 * 1024 ** 3, totalBytes: 31.3 * 1024 ** 3 },
+          disk: null,
+        },
+      }),
+      options(),
+    );
+
+    const rows = resourceRows(view);
+    expect(section(view, "⚙️")).toContain("N/A");
+    // La barra vacia ocupa el mismo sitio que con un valor real.
+    expect(new Set(rows.map((row) => row.search(/[█░]/))).size).toBe(1);
+    // El porcentaje termina en la misma columna tenga dato o no: `N/A` se
+    // rellena por la izquierda hasta las 6 columnas de "100.0%".
+    const ends = rows.map((row) => {
+      const match = /(N\/A|\d+\.\d%)/.exec(row);
+      return (match?.index ?? -1) + (match?.[0].length ?? 0);
+    });
+    expect(new Set(ends).size).toBe(1);
+    expect(ends[0]).toBeGreaterThan(0);
+  });
+
   it("marca un servicio caido y cuenta los activos", () => {
     const view = renderStatusView(
       snapshot({
@@ -165,11 +283,97 @@ describe("renderStatusView", () => {
       options(),
     );
 
-    const services = view.blocks.find((block) => block.startsWith("🧩"));
+    const services = section(view, "🧩");
     expect(services).toContain("1/4 activos");
-    expect(services).toContain("❌ fail2ban");
-    expect(services).toContain("⚠️ redis-server");
-    expect(services).toContain("❔ fantasma");
+    expect(services).toContain(`❌${NBSP}fail2ban`);
+    expect(services).toContain(`⚠️${NBSP}redis-server`);
+    expect(services).toContain(`❔${NBSP}fantasma`);
+  });
+
+  it("empaqueta los servicios sin partir ninguna entrada, con grupos y sin ellos", () => {
+    const units: ServiceStatus[] = [
+      "nginx",
+      "fail2ban",
+      "postgresql@16-main",
+      "redis-server",
+      "dovecot",
+      "postfix@-",
+      "rspamd",
+      "clamav-daemon",
+      "unbound",
+      "smbd",
+      "nmbd",
+      "example",
+      "app-pixel",
+      "auth-service",
+      "tg-gateway",
+      "ig-gateway",
+      "mail-relay",
+      "void-agent",
+      "f2b_private_bot",
+      "server-status",
+    ].map((unit) => ({ unit, state: "active" as const }));
+
+    const services = [
+      { group: "Infra", units: units.slice(0, 11) },
+      { group: "Apps", units: units.slice(11, 17) },
+      { group: "Bots", units: units.slice(17) },
+    ];
+
+    for (const showGroups of [true, false]) {
+      const view = renderStatusView(
+        snapshot({ services }),
+        options({ display: { ...DISPLAY, showGroups } }),
+      );
+      const rows = serviceLines(view);
+
+      // Cada entrada es un bloque indivisible: un solo espacio duro por unidad.
+      expect(rows.join("\n").split(NBSP)).toHaveLength(units.length + 1);
+      // Ninguna linea se pasa del ancho prometido ni termina en un emoji
+      // huerfano con el nombre del servicio en la linea siguiente.
+      for (const row of rows) {
+        expect(displayWidth(row)).toBeLessThanOrEqual(MAX_LINE_WIDTH);
+        expect(endsWithMark(row)).toBe(false);
+        expect(row.trim()).not.toBe("");
+      }
+      // Los nombres largos quedan enteros en una linea.
+      expect(rows.some((row) => row.includes(`✅${NBSP}postgresql@16-main`))).toBe(true);
+      expect(rows.some((row) => row.includes(`✅${NBSP}f2b_private_bot`))).toBe(true);
+      // Con grupos, cada linea empieza por su etiqueta o por la indentacion.
+      if (showGroups) {
+        expect(rows.some((row) => row.startsWith("Infra "))).toBe(true);
+        expect(rows.some((row) => row.startsWith("Apps  "))).toBe(true);
+        expect(rows.some((row) => row.startsWith("Bots  "))).toBe(true);
+        // Las continuaciones van alineadas con la primera entrada del grupo.
+        expect(new Set(rows.map(markColumn)).size).toBe(1);
+      } else {
+        expect(rows.some((row) => row.startsWith("Infra"))).toBe(false);
+        expect(rows.every((row) => row.startsWith("✅") || row.includes("✅"))).toBe(true);
+      }
+    }
+  });
+
+  it("las temperaturas se empaquetan sin pasar del ancho", () => {
+    const view = renderStatusView(
+      snapshot({
+        temperatures: Array.from({ length: 8 }, (_, index) => ({
+          source: "hwmon" as const,
+          name: `Sensor-${index}`,
+          celsius: 40 + index,
+          warn: 70,
+          crit: 90,
+          detail: "hwmon",
+        })),
+      }),
+      options(),
+    );
+
+    const rows = lines(section(view, "🌡️")).slice(1);
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows) {
+      expect(displayWidth(row)).toBeLessThanOrEqual(MAX_LINE_WIDTH);
+      expect(row.endsWith(" · ")).toBe(false);
+    }
   });
 
   it("una web caida muestra el codigo o el motivo", () => {
@@ -184,7 +388,7 @@ describe("renderStatusView", () => {
       options(),
     );
 
-    const websites = view.blocks.find((block) => block.startsWith("🌐"));
+    const websites = section(view, "🌐");
     expect(websites).toContain("1/3");
     expect(websites).toContain("✅ example.com 118 ms");
     expect(websites).toContain("❌ caida.com 503 · 12 ms");
@@ -203,19 +407,19 @@ describe("renderStatusView", () => {
     };
     const view = renderStatusView(snapshot(), options({ display }));
 
-    const services = view.blocks.find((block) => block.startsWith("🧩"));
-    expect(services).not.toContain("Infra \"");
-    // Sin grupos: todos los servicios en una sola linea y sin el nombre del grupo.
-    expect(services).not.toContain("\nInfra");
-    expect(services).not.toContain("\nBots");
+    // Sin grupos no aparece el nombre de ninguno.
+    expect(serviceLines(view).some((row) => row.startsWith("Infra"))).toBe(false);
+    expect(serviceLines(view).some((row) => row.startsWith("Bots"))).toBe(false);
 
     const network = view.blocks.find((block) => block.includes("Fail2ban"));
     expect(network).toBe("🔒 Fail2ban: 37 IPs baneadas");
     expect(view.blocks.join("\n")).not.toContain("📡 RED");
 
-    const cpu = view.blocks.find((block) => block.includes("CPU"));
-    expect(cpu).toContain("🟪");
-    expect(cpu?.split("\n")[1]).toMatch(/🟪+⬜+/);
+    // La barra tiene los 10 bloques del inventario y es de caracteres fijos.
+    const cpu = resourceRows(view)[0];
+    expect(cpu).toContain("█");
+    expect(cpu).toContain("░");
+    expect(cpu?.match(/[█░]+/)?.[0]).toHaveLength(10);
   });
 
   it("muestra N/A y no rompe cuando una fuente falla", () => {
@@ -242,9 +446,20 @@ describe("renderStatusView", () => {
 
     const text = view.blocks.join("\n");
     expect(text).toContain("N/A");
-    expect(text).toContain("SSD ❔ N/A");
+    expect(text).toContain(`SSD${NBSP}❔${NBSP}N/A`);
     expect(text).toContain("🔒 Fail2ban: sin datos");
     expect(text).toContain("✅ example.com N/A");
+  });
+
+  it("ninguna linea se pasa del ancho que promete el render", () => {
+    for (const showGroups of [true, false]) {
+      const view = renderStatusView(snapshot(), options({ display: { ...DISPLAY, showGroups } }));
+      for (const block of view.blocks) {
+        for (const line of lines(block)) {
+          expect(displayWidth(line)).toBeLessThanOrEqual(MAX_LINE_WIDTH);
+        }
+      }
+    }
   });
 
   it("no se pasa del limite de componentes ni de caracteres", () => {
@@ -260,6 +475,9 @@ describe("renderStatusView", () => {
     expect(countComponents(view)).toBeLessThanOrEqual(40);
     for (const block of view.blocks) {
       expect(block.length).toBeLessThanOrEqual(4000);
+    }
+    for (const row of serviceLines(view)) {
+      expect(displayWidth(row)).toBeLessThanOrEqual(MAX_LINE_WIDTH);
     }
   });
 });

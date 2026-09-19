@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { VERSION } from "../src/infrastructure/config/version.ts";
 import {
+  displayWidth,
   formatAgo,
   formatBytes,
   formatCelsius,
@@ -11,6 +12,7 @@ import {
   formatPercent,
   formatUptime,
   NOT_AVAILABLE,
+  packEntries,
   progressBar,
 } from "../src/domain/services/format.ts";
 
@@ -58,17 +60,81 @@ describe("formatPercent, formatCelsius y formatMilliseconds", () => {
 });
 
 describe("progressBar", () => {
-  it("pinta tantos bloques como porcentaje", () => {
-    expect(progressBar(0, 5)).toBe("⬜⬜⬜⬜⬜");
-    expect(progressBar(100, 5)).toBe("🟪🟪🟪🟪🟪");
-    expect(progressBar(12.4, 5)).toBe("🟪⬜⬜⬜⬜");
-    expect(progressBar(36, 10)).toBe("🟪🟪🟪🟪⬜⬜⬜⬜⬜⬜");
+  it("pinta tantos bloques como porcentaje, con caracteres de ancho fijo", () => {
+    // Nada de emoji: `🟪`/`⬜` no tienen ancho estable en Discord y desalinean
+    // el porcentaje y el detalle que van detras.
+    expect(progressBar(0, 5)).toBe("░░░░░");
+    expect(progressBar(100, 5)).toBe("█████");
+    expect(progressBar(12.4, 5)).toBe("█░░░░");
+    expect(progressBar(36, 10)).toBe("████░░░░░░");
   });
 
   it("no se sale del numero de bloques ni con datos raros", () => {
-    expect(progressBar(200, 5)).toBe("🟪🟪🟪🟪🟪");
-    expect(progressBar(-10, 5)).toBe("⬜⬜⬜⬜⬜");
-    expect(progressBar(null, 5)).toBe("⬜⬜⬜⬜⬜");
+    expect(progressBar(200, 5)).toBe("█████");
+    expect(progressBar(-10, 5)).toBe("░░░░░");
+    expect(progressBar(null, 5)).toBe("░░░░░");
+    expect(progressBar(Number.NaN, 5)).toBe("░░░░░");
+  });
+
+  it("ocupa siempre el mismo numero de columnas", () => {
+    for (const percent of [0, 12.4, 36, 99.9, 100, null]) {
+      expect(displayWidth(progressBar(percent, 7))).toBe(7);
+    }
+  });
+});
+
+describe("displayWidth", () => {
+  it("cuenta una columna por caracter normal", () => {
+    expect(displayWidth("nginx")).toBe(5);
+    expect(displayWidth("postgresql@16-main")).toBe(18);
+    expect(displayWidth("CPU\u00A053.6 °C")).toBe(11);
+    expect(displayWidth("")).toBe(0);
+  });
+
+  it("cuenta dos columnas por emoji y ninguna por el selector de variacion", () => {
+    expect(displayWidth("✅ nginx")).toBe(8);
+    expect(displayWidth("❌")).toBe(2);
+    expect(displayWidth("⚠️")).toBe(2);
+    expect(displayWidth("❔")).toBe(2);
+  });
+});
+
+describe("packEntries", () => {
+  it("mete las entradas que quepan y salta de linea entera", () => {
+    expect(packEntries(["aaa", "bbb", "ccc"], { maxWidth: 7 })).toEqual(["aaa bbb", "ccc"]);
+  });
+
+  it("nunca parte una entrada, aunque no quepa sola", () => {
+    expect(packEntries(["servicio-muy-largo-que-no-cabe"], { maxWidth: 10 })).toEqual([
+      "servicio-muy-largo-que-no-cabe",
+    ]);
+    expect(packEntries(["aaa", "servicio-muy-largo-que-no-cabe"], { maxWidth: 10 })).toEqual([
+      "aaa",
+      "servicio-muy-largo-que-no-cabe",
+    ]);
+  });
+
+  it("respeta el separador y la indentacion al medir", () => {
+    expect(packEntries(["a", "b", "c"], { maxWidth: 5, separator: " · " })).toEqual([
+      "a · b",
+      "c",
+    ]);
+    // La indentacion tambien consume ancho: "  aaa bbb" son 9 columnas.
+    expect(packEntries(["aaa", "bbb"], { maxWidth: 7, indent: "  " })).toEqual([
+      "  aaa",
+      "  bbb",
+    ]);
+  });
+
+  it("mide los emoji como dos columnas para no pasarse del ancho", () => {
+    const entries = ["✅ nginx", "✅ fail2ban"];
+    // "✅ nginx ✅ fail2ban" son 8 + 1 + 11 = 20 columnas (cada ✅ ocupa dos).
+    expect(packEntries(entries, { maxWidth: 20 })).toEqual(["✅ nginx ✅ fail2ban"]);
+    expect(packEntries(entries, { maxWidth: 19 })).toEqual(["✅ nginx", "✅ fail2ban"]);
+  });
+
+  it("devuelve una lista vacia sin entradas", () => {
+    expect(packEntries([], { maxWidth: 10 })).toEqual([]);
   });
 });
 

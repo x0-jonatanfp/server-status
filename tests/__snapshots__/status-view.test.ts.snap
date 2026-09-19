@@ -5,15 +5,18 @@ exports[`renderStatusView > compone el mensaje completo 1`] = `
   "🟢 SERVER STATUS · void · 14:32:10
 example.com · Ubuntu 24.04 · kernel 7.0.0 · up 4d 12h 07m",
   "⚙️ RECURSOS
-🧠 CPU 12.4% 🟪⬜⬜⬜⬜
-💾 RAM 18.4% 🟪⬜⬜⬜⬜ 5.8 GB / 31.3 GB
-💽 Disco 36.0% 🟪🟪⬜⬜⬜ 164.5 GB / 456.9 GB",
+\`\`\`
+CPU    █░░░░   12.4%
+RAM    █░░░░   18.4%  5.8 GB / 31.3 GB
+Disco  ██░░░   36.0%  164.5 GB / 456.9 GB
+\`\`\`",
   "🌡️ TEMPERATURAS
-CPU 53.6 °C · GPU 44.0 °C · NVMe 40.9 °C · Placa 35.0 °C · SSD 38.0 °C · HDD 34.0 °C",
+CPU 53.6 °C · GPU 44.0 °C · NVMe 40.9 °C · Placa 35.0 °C
+SSD 38.0 °C · HDD 34.0 °C",
   "🧩 SERVICIOS 6/6 activos
-Infra ✅ nginx ✅ fail2ban ✅ postgresql@16-main
-Apps ✅ example ✅ app-pixel
-Bots ✅ void-agent",
+Infra ✅ nginx ✅ fail2ban ✅ postgresql@16-main
+Apps  ✅ example ✅ app-pixel
+Bots  ✅ void-agent",
   "🌐 WEBS 3/3
 ✅ example.com 118 ms
 ✅ www.example.com 105 ms

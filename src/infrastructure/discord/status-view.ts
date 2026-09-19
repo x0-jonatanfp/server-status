@@ -22,10 +22,12 @@ import {
 } from "discord.js";
 
 import type { DisplaySettings, MetricKey, MetricThreshold } from "../../domain/entities/inventory.ts";
+import type { ServiceStatus } from "../../domain/entities/service-status.ts";
 import type { StatusSnapshot } from "../../domain/entities/status-snapshot.ts";
 import type { StatusView } from "../../domain/entities/status-view.ts";
 import type { StatusRendererPort } from "../../domain/ports/status-renderer.ts";
 import {
+  displayWidth,
   formatBytes,
   formatCelsius,
   formatClock,
@@ -34,6 +36,7 @@ import {
   formatPercent,
   formatUptime,
   NOT_AVAILABLE,
+  packEntries,
   progressBar,
 } from "../../domain/services/format.ts";
 import {
@@ -54,6 +57,15 @@ export const MAX_TEXT_DISPLAY_CHARS = 4000;
 
 /** Limite de componentes por mensaje en Discord. */
 export const MAX_COMPONENTS = 40;
+
+/**
+ * Ancho maximo (en columnas) de las lineas que empaqueta el bot.
+ *
+ * Discord parte las lineas donde quiere, asi que las listas (servicios,
+ * temperaturas) y la tabla de recursos se cortan antes: cada entrada queda
+ * entera en una linea. Es un presupuesto de anchura, no un limite de Discord.
+ */
+export const MAX_LINE_WIDTH = 60;
 
 export interface StatusRendererOptions {
   display: DisplaySettings;
@@ -154,30 +166,73 @@ function formatDistribution(os: StatusSnapshot["system"]["os"]): string | null {
   return [os.distro, version].filter((part) => part !== "").join(" ");
 }
 
+interface ResourceRow {
+  label: string;
+  percent: number | null;
+  /** Detalle a la derecha de la barra (vacio en la CPU). */
+  detail: string;
+  level: Level;
+}
+
+/**
+ * Tabla de recursos en un bloque de codigo monoespaciado.
+ *
+ * En vez de una linea por metrica con emoji, la tabla es texto: Discord la
+ * pinta con ancho fijo y las columnas (etiqueta, barra, porcentaje, detalle)
+ * caen siempre en el mismo sitio. El porcentaje se rellena a 6 columnas
+ * ("100.0%") para que no se mueva con 1, 2 o 3 digitos ni con `N/A`.
+ */
 function renderResources(snapshot: StatusSnapshot, options: StatusRendererOptions): Section {
   const { display, thresholds } = options;
   const blocks = display.progressBarBlocks;
+  const { memory, disk } = snapshot.system;
 
   const cpuLevel = levelFromThreshold(snapshot.system.cpuPercent, thresholds.cpu_percent);
-  const memoryLevel = levelFromThreshold(
-    snapshot.system.memory?.percent ?? null,
-    thresholds.memory_percent,
-  );
-  const diskLevel = levelFromThreshold(snapshot.system.disk?.percent ?? null, thresholds.disk_percent);
+  const memoryLevel = levelFromThreshold(memory?.percent ?? null, thresholds.memory_percent);
+  const diskLevel = levelFromThreshold(disk?.percent ?? null, thresholds.disk_percent);
 
-  const lines = [
-    `🧠 CPU ${formatPercent(snapshot.system.cpuPercent)} ${progressBar(snapshot.system.cpuPercent, blocks)}${anomalyMark(cpuLevel)}`,
-    `💾 RAM ${formatPercent(snapshot.system.memory?.percent ?? null)} ${progressBar(snapshot.system.memory?.percent ?? null, blocks)} ${formatBytes(snapshot.system.memory?.usedBytes ?? null)} / ${formatBytes(snapshot.system.memory?.totalBytes ?? null)}${anomalyMark(memoryLevel)}`,
-    `💽 Disco ${formatPercent(snapshot.system.disk?.percent ?? null)} ${progressBar(snapshot.system.disk?.percent ?? null, blocks)} ${formatBytes(snapshot.system.disk?.usedBytes ?? null)} / ${formatBytes(snapshot.system.disk?.totalBytes ?? null)}${anomalyMark(diskLevel)}`,
+  const rows: ResourceRow[] = [
+    { label: "CPU", percent: snapshot.system.cpuPercent, detail: "", level: cpuLevel },
+    {
+      label: "RAM",
+      percent: memory?.percent ?? null,
+      detail: `${formatBytes(memory?.usedBytes ?? null)} / ${formatBytes(memory?.totalBytes ?? null)}`,
+      level: memoryLevel,
+    },
+    {
+      label: "Disco",
+      percent: disk?.percent ?? null,
+      detail: `${formatBytes(disk?.usedBytes ?? null)} / ${formatBytes(disk?.totalBytes ?? null)}`,
+      level: diskLevel,
+    },
   ];
 
+  const labelWidth = Math.max(...rows.map((row) => displayWidth(row.label)));
+  // "100.0%" es el porcentaje mas ancho posible: la columna no depende del dato.
+  const percentWidth = Math.max(
+    ...rows.map((row) => displayWidth(formatPercent(row.percent))),
+    displayWidth("100.0%"),
+  );
+
+  const table = rows.map((row) => {
+    const label = row.label + " ".repeat(labelWidth - displayWidth(row.label));
+    const percent = formatPercent(row.percent).padStart(percentWidth);
+    const detail = row.detail === "" ? "" : `  ${row.detail}`;
+    const mark = anomalyMark(row.level);
+    return `${label}  ${progressBar(row.percent, blocks)}  ${percent}${detail}${mark}`;
+  });
+
   return {
-    text: ["⚙️ RECURSOS", ...lines].join("\n"),
+    text: ["⚙️ RECURSOS", "```", ...table, "```"].join("\n"),
     levels: [cpuLevel, memoryLevel, diskLevel],
   };
 }
 
-/** Marca de una lectura: lo que esta bien no se marca. */
+/**
+ * Marca de una lectura fuera de rango: lo que esta bien no se marca. Los emoji
+ * van siempre al final de la linea o dentro de entradas que no se parten, para
+ * que su anchura no descoloque las columnas.
+ */
 function anomalyMark(level: Level): string {
   return level === "ok" ? "" : ` ${levelMark(level)}`;
 }
@@ -190,12 +245,16 @@ function renderTemperatures(snapshot: StatusSnapshot): Section {
 
   if (readings.length === 0) return { text: null, levels };
 
-  const parts = readings.map((reading, index) => {
+  // NBSP entre el nombre y su valor: Discord no puede partir la entrada y
+  // dejar "CPU" en una linea y la temperatura en la siguiente.
+  const entries = readings.map((reading, index) => {
     const level = levels[index] ?? "ok";
-    return `${reading.name}${anomalyMark(level)} ${formatCelsius(reading.celsius)}`;
+    const mark = level === "ok" ? "" : `${levelMark(level)}\u00A0`;
+    return `${reading.name}\u00A0${mark}${formatCelsius(reading.celsius)}`;
   });
 
-  return { text: ["🌡️ TEMPERATURAS", parts.join(" · ")].join("\n"), levels };
+  const lines = packEntries(entries, { maxWidth: MAX_LINE_WIDTH, separator: " · " });
+  return { text: ["🌡️ TEMPERATURAS", ...lines].join("\n"), levels };
 }
 
 function renderServices(snapshot: StatusSnapshot, display: DisplaySettings): Section {
@@ -208,14 +267,28 @@ function renderServices(snapshot: StatusSnapshot, display: DisplaySettings): Sec
   const levels = units.map((unit) => levelFromServiceState(unit.state));
   const running = levels.filter((level) => level === "ok").length;
 
+  // NBSP entre la marca y el nombre: el ✅ no se queda huerfano al final de una
+  // linea con el servicio en la siguiente. Cada entrada es una unidad.
+  const entryOf = (unit: ServiceStatus): string => `${stateMark(unit.state)}\u00A0${unit.unit}`;
+
   const lines: string[] = [];
   if (display.showGroups) {
+    const labelWidth = Math.max(...groups.map((group) => displayWidth(group.group)));
     for (const group of groups) {
-      const parts = group.units.map((unit) => `${stateMark(unit.state)} ${unit.unit}`);
-      lines.push(`${group.group} ${parts.join(" ")}`);
+      const entries = group.units.map(entryOf);
+      if (entries.length === 0) continue;
+
+      const label = group.group + " ".repeat(labelWidth - displayWidth(group.group));
+      const indent = " ".repeat(labelWidth + 1);
+      const packed = packEntries(entries, { maxWidth: MAX_LINE_WIDTH, indent });
+      const first = packed[0];
+      if (first === undefined) continue;
+
+      lines.push(`${label} ${first.slice(indent.length)}`);
+      lines.push(...packed.slice(1));
     }
   } else {
-    lines.push(units.map((unit) => `${stateMark(unit.state)} ${unit.unit}`).join(" "));
+    lines.push(...packEntries(units.map(entryOf), { maxWidth: MAX_LINE_WIDTH }));
   }
 
   return {
