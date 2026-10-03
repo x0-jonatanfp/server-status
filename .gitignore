@@ -19,6 +19,9 @@ data/
 
 # Spike (evidencia local, no forma parte del servicio)
 spike/node_modules/
+.agents/
+.claude/
+skills-lock.json
 
 # Sistema
 .DS_Store
