@@ -207,14 +207,22 @@ describe("parsers", () => {
 });
 
 describe.runIf(process.platform === "linux")("fail2ban en esta maquina", () => {
-  it("ve las 9 carceles, incluidas las que el bot antiguo no conocia", async () => {
+  it("lee las carceles reales, sean cuales sean las del equipo", async () => {
     const status = await createFail2banClient().status();
 
-    expect(status.available).toBe(true);
-    expect(status.jails).toHaveLength(9);
-    expect(status.jails.map((jail) => jail.name)).toContain("postgresql");
-    expect(status.jails.map((jail) => jail.name)).toContain("postfix-sasl-extra");
+    if (!status.available) {
+      // Maquina sin fail2ban (o sin la regla NOPASSWD para consultarlo): el
+      // colector lo dice en `error` y no inventa carceles.
+      expect(status.error).not.toBeNull();
+      expect(status.jails).toEqual([]);
+      return;
+    }
+
+    // Las carceles dependen del equipo: cada maquina tiene las suyas. Aqui solo
+    // se comprueba que la lectura real es coherente, nunca una lista fija.
+    expect(status.error).toBeNull();
     for (const jail of status.jails) {
+      expect(jail.name).not.toBe("");
       expect(jail.banned === null || jail.banned >= 0).toBe(true);
     }
   });
