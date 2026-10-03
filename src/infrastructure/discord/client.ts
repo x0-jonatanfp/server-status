@@ -237,7 +237,46 @@ export function createShutdown(options: ShutdownOptions): (signal: string) => Pr
   };
 }
 
-/** Conecta el cliente y fija la presencia y los comandos al estar listo. */
+/**
+ * Engancha la presencia del bot al ciclo de vida del gateway y devuelve el
+ * refresco para reenviarla desde fuera.
+ *
+ * Un estado personalizado se pierde a lo largo de las horas: cuando la sesion
+ * del gateway se rehace (reanudacion o re-identificacion), Discord limpia la
+ * presencia y el bot se queda sin el emoji ni el nombre del estado hasta el
+ * siguiente arranque. Por eso se reenvia en cada shard listo y en cada
+ * reanudacion, y el bucle del estado la repite en cada ciclo (por si Discord la
+ * limpia por su cuenta). Es un solo camino de envio, sin temporizador propio.
+ */
+export function attachPresence(
+  client: Client,
+  activity: ActivityOptions,
+  logger: Pick<LoggerPort, "warn">,
+): () => void {
+  const presence: PresenceData = {
+    status: "online",
+    activities: [activity],
+  };
+
+  const refresh = (): void => {
+    if (!client.isReady()) return;
+    try {
+      client.user?.setPresence(presence);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(`no se ha podido enviar la presencia: ${message}`);
+    }
+  };
+
+  client.on(Events.ShardReady, refresh);
+  client.on(Events.ShardResume, refresh);
+  return refresh;
+}
+
+/**
+ * Conecta el cliente y fija los comandos al estar listo. La presencia va aparte,
+ * con `attachPresence`: tiene que reenviarse al reconectar, no solo al arrancar.
+ */
 export async function connect(options: {
   client: Client;
   config: AppConfig;
@@ -252,11 +291,6 @@ export async function connect(options: {
   client.once(Events.ClientReady, (ready) => {
     void (async () => {
       logger.info(`conectado como ${ready.user.tag} (${ready.user.id})`);
-      const presence: PresenceData = {
-        status: "online",
-        activities: [buildActivity(config.activity)],
-      };
-      ready.user.setPresence(presence);
       await options.onReady(ready);
     })();
   });

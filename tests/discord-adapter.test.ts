@@ -1,9 +1,17 @@
-import { ActivityType, MessageFlags, type ChatInputCommandInteraction, type Client } from "discord.js";
+import {
+  ActivityType,
+  Events,
+  MessageFlags,
+  type ActivityOptions,
+  type ChatInputCommandInteraction,
+  type Client,
+} from "discord.js";
 import { describe, expect, it, vi } from "vitest";
 
 import type { StatusView } from "../src/domain/entities/status-view.ts";
 import { ACTIVITY_TYPE_NAMES, type ActivityConfig } from "../src/infrastructure/config/env.ts";
 import {
+  attachPresence,
   buildActivity,
   createBotStatusPort,
   createShutdown,
@@ -172,6 +180,69 @@ describe("buildActivity", () => {
     });
     expect(activity.type).toBe(ActivityType.Streaming);
     expect(activity.url).toBe("https://twitch.tv/example");
+  });
+});
+
+describe("attachPresence", () => {
+  const activity: ActivityOptions = {
+    name: "example.com",
+    type: ActivityType.Custom,
+    state: "🔗 example.com",
+  };
+
+  /** Cliente de mentira: guarda los manejadores y espia setPresence. */
+  function fakeClient(ready = true) {
+    const handlers = new Map<string, () => void>();
+    const setPresence = vi.fn();
+    const client = {
+      isReady: () => ready,
+      user: { setPresence },
+      on: (event: string, handler: () => void) => {
+        handlers.set(event, handler);
+      },
+    } as unknown as Client;
+    return { client, handlers, setPresence };
+  }
+
+  it("reenvia la presencia en cada shard listo y en cada reanudacion", () => {
+    const { client, handlers, setPresence } = fakeClient();
+    attachPresence(client, activity, logger());
+
+    expect(handlers.has(Events.ShardReady)).toBe(true);
+    expect(handlers.has(Events.ShardResume)).toBe(true);
+
+    handlers.get(Events.ShardReady)?.();
+    handlers.get(Events.ShardResume)?.();
+
+    expect(setPresence).toHaveBeenCalledTimes(2);
+    expect(setPresence).toHaveBeenCalledWith({ status: "online", activities: [activity] });
+  });
+
+  it("el refresco devuelto reenvia la presencia sin esperar a una reconexion", () => {
+    const { client, setPresence } = fakeClient();
+
+    attachPresence(client, activity, logger())();
+
+    expect(setPresence).toHaveBeenCalledWith({ status: "online", activities: [activity] });
+  });
+
+  it("no envia nada si el cliente aun no esta listo", () => {
+    const { client, setPresence } = fakeClient(false);
+
+    attachPresence(client, activity, logger())();
+
+    expect(setPresence).not.toHaveBeenCalled();
+  });
+
+  it("un fallo al enviarla se registra y no propaga", () => {
+    const { client, setPresence } = fakeClient();
+    setPresence.mockImplementation(() => {
+      throw new Error("rate limited");
+    });
+    const log = logger();
+
+    expect(() => attachPresence(client, activity, log)()).not.toThrow();
+    expect(log.warn).toHaveBeenCalled();
   });
 });
 

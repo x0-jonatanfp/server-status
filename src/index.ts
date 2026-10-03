@@ -17,6 +17,8 @@ import { AlertChecker } from "./application/check-alerts.ts";
 import { StatusLoop } from "./application/publish-status.ts";
 import type { CommandContext } from "./infrastructure/discord/commands/index.ts";
 import {
+  attachPresence,
+  buildActivity,
   connect,
   createBotStatusPort,
   createDiscordClient,
@@ -65,6 +67,10 @@ export async function main(): Promise<void> {
   const store = new JsonStateStore({ path: app.statePath, logger });
   const client = createDiscordClient();
   const resolver = createChannelResolver(client);
+
+  // La presencia se reenvia al (re)conectar y en cada ciclo del estado: el
+  // estado personalizado se pierde a lo largo de las horas (ver attachPresence).
+  const refreshPresence = attachPresence(client, buildActivity(app.activity), logger);
 
   // Los volumenes y el sensor de uso de la GPU salen del inventario: el
   // composition root solo los pasa al adaptador que toca el sistema.
@@ -120,6 +126,9 @@ export async function main(): Promise<void> {
       alertChannelId: app.alertChannelId,
       logger,
     }),
+    // La presencia del bot se reenvia con cada ciclo, el mismo que edita el
+    // mensaje: si Discord la limpia por su cuenta, vuelve en el siguiente.
+    onRun: () => refreshPresence(),
   });
 
   const context: CommandContext = {
