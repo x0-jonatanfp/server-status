@@ -11,12 +11,12 @@ exports[`renderStatusView > compone el mensaje completo 1`] = `
 🗄️ HDD   🟪⬜⬜⬜⬜⬜⬜⬜⬜⬜  124.0 GB / 916.0 GB · 30.0 °C",
   "🧩 SERVICIOS 6/6 activos
 Infra ✅ nginx ✅ fail2ban ✅ postgresql@16-main
-Apps  ✅ example ✅ app-pixel
+Apps  ✅ app-uno ✅ app-dos
 Bots  ✅ void-agent",
   "🌐 WEBS 3/3
-✅ example.com 118 ms
-✅ www.example.com 105 ms
-✅ example.org 131 ms",
+✅ app-uno 118 ms
+✅ app-dos 105 ms
+✅ app-tres 131 ms",
   "📡 RED
 Bot 42 ms",
   "🔒 FAIL2BAN · 69 IPs baneadas

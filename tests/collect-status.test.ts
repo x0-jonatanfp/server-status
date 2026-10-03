@@ -32,14 +32,14 @@ function fakePorts(): CollectStatusPorts {
   };
   const websites: WebsiteProbePort = {
     probe: async () => [
-      { label: "example", url: "https://example.com", up: true, statusCode: 200, latencyMs: 10, error: null },
+      { label: "example.com", url: "https://example.com", up: true, statusCode: 200, latencyMs: 10, error: null },
     ],
   };
   const fail2ban: Fail2banPort = {
     status: async () => ({
       available: true,
-      totalBanned: 37,
-      jails: [{ name: "recidive", banned: 31 }],
+      totalBanned: 13,
+      jails: [{ name: "dummy", banned: 7 }],
       error: null,
     }),
     unban: async (ip) => ({ ip, jails: [] }),
@@ -59,8 +59,8 @@ describe("collectStatus", () => {
     expect(snapshot.services).toEqual([
       { group: "Infra", units: [{ unit: "nginx", state: "active" }] },
     ]);
-    expect(snapshot.websites[0]).toMatchObject({ label: "example", up: true });
-    expect(snapshot.fail2ban.totalBanned).toBe(37);
+    expect(snapshot.websites[0]).toMatchObject({ label: "example.com", up: true });
+    expect(snapshot.fail2ban.totalBanned).toBe(13);
     expect(snapshot.bot).toEqual({ pingMs: 42, uptimeSeconds: 120 });
   });
 

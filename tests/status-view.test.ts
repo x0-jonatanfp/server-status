@@ -131,16 +131,16 @@ function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
       {
         group: "Apps",
         units: [
-          { unit: "example", state: "active" },
-          { unit: "app-pixel", state: "active" },
+          { unit: "app-uno", state: "active" },
+          { unit: "app-dos", state: "active" },
         ],
       },
       { group: "Bots", units: [{ unit: "void-agent", state: "active" }] },
     ],
     websites: [
-      { label: "example.com", url: "https://example.com", up: true, statusCode: 200, latencyMs: 118, error: null },
-      { label: "www.example.com", url: "https://www.example.com", up: true, statusCode: 200, latencyMs: 105, error: null },
-      { label: "example.org", url: "https://example.org", up: true, statusCode: 200, latencyMs: 131, error: null },
+      { label: "app-uno", url: "https://uno.example", up: true, statusCode: 200, latencyMs: 118, error: null },
+      { label: "app-dos", url: "https://dos.example", up: true, statusCode: 200, latencyMs: 105, error: null },
+      { label: "app-tres", url: "https://tres.example", up: true, statusCode: 200, latencyMs: 131, error: null },
     ],
     fail2ban: {
       available: true,
@@ -364,8 +364,8 @@ describe("renderStatusView", () => {
       "unbound",
       "smbd",
       "nmbd",
-      "example",
-      "app-pixel",
+      "app-uno",
+      "app-dos",
       "auth-service",
       "tg-gateway",
       "ig-gateway",
@@ -398,9 +398,9 @@ describe("renderStatusView", () => {
         expect(row.trim()).not.toBe("");
       }
       // Los nombres largos quedan enteros en una linea.
-      expect(rows.some((row) => row.includes(`✅${NBSP}postgresql@16-main`))).toBe(true);
-      expect(rows.some((row) => row.includes(`✅${NBSP}f2b_private_bot`))).toBe(true);
-      // Con grupos, cada linea empieza por su etiqueta o por la indentacion.
+    expect(rows.some((row) => row.includes(`✅${NBSP}postgresql@16-main`))).toBe(true);
+    expect(rows.some((row) => row.includes(`✅${NBSP}f2b_private_bot`))).toBe(true);
+    // Con grupos, cada linea empieza por su etiqueta o por la indentacion.
       if (showGroups) {
         expect(rows.some((row) => row.startsWith("Infra "))).toBe(true);
         expect(rows.some((row) => row.startsWith("Apps  "))).toBe(true);
@@ -408,8 +408,8 @@ describe("renderStatusView", () => {
         // Las continuaciones van alineadas con la primera entrada del grupo.
         expect(new Set(rows.map(markColumn)).size).toBe(1);
       } else {
-        expect(rows.some((row) => row.startsWith("Infra"))).toBe(false);
-        expect(rows.every((row) => row.startsWith("✅") || row.includes("✅"))).toBe(true);
+    expect(rows.some((row) => row.startsWith("Infra"))).toBe(false);
+    expect(rows.every((row) => row.startsWith("✅") || row.includes("✅"))).toBe(true);
       }
     }
   });
@@ -418,9 +418,9 @@ describe("renderStatusView", () => {
     const view = renderStatusView(
       snapshot({
         websites: [
-          { label: "example.com", url: "https://example.com", up: true, statusCode: 200, latencyMs: 118, error: null },
-          { label: "caida.com", url: "https://caida.com", up: false, statusCode: 503, latencyMs: 12, error: null },
-          { label: "muda.com", url: "https://muda.com", up: false, statusCode: null, latencyMs: null, error: "timeout" },
+          { label: "app-uno", url: "https://uno.example", up: true, statusCode: 200, latencyMs: 118, error: null },
+          { label: "caida-app", url: "https://caida.example", up: false, statusCode: 503, latencyMs: 12, error: null },
+          { label: "muda-app", url: "https://muda.example", up: false, statusCode: null, latencyMs: null, error: "timeout" },
         ],
       }),
       options(),
@@ -428,9 +428,9 @@ describe("renderStatusView", () => {
 
     const websites = section(view, "🌐");
     expect(websites).toContain("1/3");
-    expect(websites).toContain("✅ example.com 118 ms");
-    expect(websites).toContain("❌ caida.com 503 · 12 ms");
-    expect(websites).toContain("❌ muda.com timeout");
+    expect(websites).toContain("✅ app-uno 118 ms");
+    expect(websites).toContain("❌ caida-app 503 · 12 ms");
+    expect(websites).toContain("❌ muda-app timeout");
     // Una web caida no pone el mensaje en rojo, solo en ambar.
     expect(view.level).toBe("warning");
   });

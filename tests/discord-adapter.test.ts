@@ -176,10 +176,10 @@ describe("buildActivity", () => {
     const activity = buildActivity({
       ...base,
       type: "Streaming",
-      url: "https://twitch.tv/example",
+      url: "https://twitch.tv/example.com",
     });
     expect(activity.type).toBe(ActivityType.Streaming);
-    expect(activity.url).toBe("https://twitch.tv/example");
+    expect(activity.url).toBe("https://twitch.tv/example.com");
   });
 });
 
@@ -220,7 +220,6 @@ describe("attachPresence", () => {
 
   it("el refresco devuelto reenvia la presencia sin esperar a una reconexion", () => {
     const { client, setPresence } = fakeClient();
-
     attachPresence(client, activity, logger())();
 
     expect(setPresence).toHaveBeenCalledWith({ status: "online", activities: [activity] });
@@ -228,7 +227,6 @@ describe("attachPresence", () => {
 
   it("no envia nada si el cliente aun no esta listo", () => {
     const { client, setPresence } = fakeClient(false);
-
     attachPresence(client, activity, logger())();
 
     expect(setPresence).not.toHaveBeenCalled();

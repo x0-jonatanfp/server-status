@@ -17,6 +17,7 @@ import type {
 import { JsonStateStore } from "../src/infrastructure/persistence/state-store.ts";
 
 const CHANNEL = "111111111111111111";
+const OTHER_CHANNEL = "222222222222222222";
 
 const tmpDirs: string[] = [];
 
@@ -325,7 +326,7 @@ describe("StatusLoop", () => {
 
   it("publica en varios canales y mantiene un mensaje por canal", async () => {
     const publisher = new FakePublisher();
-    const otherChannel = "222222222222222222";
+    const otherChannel = OTHER_CHANNEL;
     const { loop, store } = build({
       storePath: tmpStatePath(),
       publisher,
@@ -352,7 +353,7 @@ describe("StatusLoop", () => {
 
   it("un canal caido no impide publicar en el resto", async () => {
     const publisher = new FakePublisher();
-    const failingChannel = "222222222222222222";
+    const failingChannel = OTHER_CHANNEL;
     const flaky: StatusPublisherPort = {
       async publish(channelId, view_, existingMessageId) {
         if (channelId === failingChannel) throw new Error("canal sin permisos");

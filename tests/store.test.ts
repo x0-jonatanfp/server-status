@@ -33,13 +33,13 @@ describe("JsonStateStore", () => {
   it("persiste el mensaje del canal y sobrevive a un reinicio", async () => {
     const path = tmpStatePath();
     const first = new JsonStateStore({ path, logger: logger() });
-    await first.setMessageId("111111111111111111", "1392999999999999999", new Date(1000));
+    await first.setMessageId("111111111111111111", "111111111111111111", new Date(1000));
 
     // Otra instancia, como si el servicio se hubiera reiniciado.
     const second = new JsonStateStore({ path, logger: logger() });
-    expect(await second.getMessageId("111111111111111111")).toBe("1392999999999999999");
+    expect(await second.getMessageId("111111111111111111")).toBe("111111111111111111");
     expect(await second.getChannelState("111111111111111111")).toEqual({
-      messageId: "1392999999999999999",
+      messageId: "111111111111111111",
       updatedAt: new Date(1000).toISOString(),
     });
   });
