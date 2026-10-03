@@ -17,8 +17,11 @@ logs/
 data/
 *.log
 
-# Spike (evidencia local, no forma parte del servicio)
-spike/node_modules/
+# Trabajo local (no se publica): plan de desarrollo y spike de viabilidad
+PLAN.md
+spike/
+
+# Herramientas locales de desarrollo
 .agents/
 .claude/
 skills-lock.json
